@@ -79,7 +79,6 @@ runs:
           CONFIG_ZSMALLOC=y
           CONFIG_ZRAM=y
           CONFIG_CRYPTO_LZO=y
-          CONFIG_MODULE_SIG=n
 
     - name: Enable ZRAM algorithm configs
       shell: bash
@@ -95,10 +94,10 @@ runs:
             || echo "${cfg}=y" >> "$CONFIG_FILE"
         }
 
-        if [ "$K" != "6.12" ]; then
+        if [ "$K" != "6.12" ] && [ "${{ inputs.full_algo }}" = "true" ]; then
           echo "CONFIG_ZRAM_DEF_COMP_LZ4KD=y" >> "$CONFIG_FILE"
           if [ -f "$ABK_ASSETS/config/zram.config" ]; then
-            cat "$ABK_ASSETS/config/zram.config" >> "$CONFIG_FILE"
+            grep -v '^[[:space:]]*#' "$ABK_ASSETS/config/zram.config" >> "$CONFIG_FILE" || true
           fi
         fi
 
