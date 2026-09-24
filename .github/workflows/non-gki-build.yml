@@ -115,6 +115,28 @@ on:
         type: boolean
         default: false
 
+  workflow_call:
+    inputs:
+      kernel_series:      { required: true,  type: string }
+      kernel_source:      { required: true,  type: string }
+      kernel_source_branch: { required: true, type: string }
+      defconfig:          { required: true,  type: string }
+      image_name:         { required: true,  type: string }
+      arch:               { required: false, type: string, default: "arm64" }
+      ksu_variant:        { required: false, type: string, default: "resukisu" }
+      ksu_ref:            { required: false, type: string, default: "" }
+      hook_mode:          { required: false, type: string, default: "auto" }
+      use_susfs:          { required: false, type: boolean, default: false }
+      use_llvm:           { required: false, type: boolean, default: false }
+      clang_branch:       { required: false, type: string, default: "" }
+      clang_version:      { required: false, type: string, default: "" }
+      extra_defconfig:    { required: false, type: string, default: "" }
+      extra_make_args:    { required: false, type: string, default: "" }
+      disable_lto:        { required: false, type: boolean, default: false }
+      disable_cc_werror:  { required: false, type: boolean, default: true }
+      need_dtbo:          { required: false, type: boolean, default: false }
+      publish_release:    { required: false, type: boolean, default: false }
+
 concurrency:
   group: non-gki-${{ github.ref }}-${{ inputs.kernel_source }}-${{ inputs.kernel_source_branch }}
   cancel-in-progress: true

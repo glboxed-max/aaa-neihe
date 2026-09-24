@@ -1,0 +1,20 @@
+# 非 GKI 批量构建 profile 表
+# 格式: name|series|arch|source|branch|defconfig|image
+#  - defconfig 为 arch/<arch>/configs/ 下的相对路径（可含子目录）
+#  - 只有“未注释”的行会参与批量构建
+#  - series 可选: 4.4 / 4.9 / 4.14 / 4.19 / 5.4
+
+# 已验证可直接跑通的 4.19 示例（小米 6X / wayne）
+wayne-4.19|4.19|arm64|https://github.com/xiaoleGun/android_kernel_xiaomi_wayne-4.19|twrp-12|vendor/wayne_defconfig|Image.gz-dtb
+
+# ============================================================
+# 下面是各系列的“起始示例”，defconfig 名称/分支需按你的设备核对后再取消注释。
+# ============================================================
+# 4.4: 小米 8 (msm8998)
+#mi8-4.4|4.4|arm64|https://github.com/MiCode/Xiaomi_Kernel_OpenSource|msm8998-o-oss|msm8998_defconfig|Image.gz-dtb
+# 4.9: 小米 MIX 2S (sdm845)
+#mix2s-4.9|4.9|arm64|https://github.com/MiCode/Xiaomi_Kernel_OpenSource|sdm845-o-oss|sdm845_defconfig|Image.gz-dtb
+# 4.14: 小米 9 (msmnile)
+#mi9-4.14|4.14|arm64|https://github.com/MiCode/Xiaomi_Kernel_OpenSource|msmnile-q-oss|msmnile_defconfig|Image.gz-dtb
+# 5.4: 你自己的 5.4 设备内核
+#my-5.4|5.4|arm64|https://github.com/你的用户名/内核仓库|分支|defconfig名|Image.gz

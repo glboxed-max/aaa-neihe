@@ -1,0 +1,115 @@
+name: 非 GKI 批量构建
+
+# ============================================================
+#  读取 .github/matrix/nongki.tsv 中的 profile，按系列扇出多个非 GKI 构建。
+#  每个 profile 调用可复用工作流 non-gki-build.yml。
+# ============================================================
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      series:
+        description: "只构建该系列（All=全部启用的 profile）"
+        required: true
+        type: choice
+        options: ["All", "4.4", "4.9", "4.14", "4.19", "5.4"]
+        default: "All"
+      ksu_variant:
+        description: "KSU 变体"
+        required: true
+        type: choice
+        options: [resukisu, sukisu-ultra, kernelsu, kernelsu-next, none]
+        default: resukisu
+      hook_mode:
+        description: "hook 方式"
+        required: true
+        type: choice
+        options: [auto, manual, kprobes, none]
+        default: auto
+      use_susfs:
+        description: "启用 SUSFS（实验性）"
+        required: false
+        type: boolean
+        default: false
+      use_llvm:
+        description: "全程 LLVM"
+        required: false
+        type: boolean
+        default: false
+      publish_release:
+        description: "各目标完成后发布到 Releases"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  prepare:
+    name: "生成构建矩阵"
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.gen.outputs.matrix }}
+      count: ${{ steps.gen.outputs.count }}
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 读取 profile
+        id: gen
+        shell: bash
+        run: |
+          set -euo pipefail
+          FILE="$GITHUB_WORKSPACE/.github/matrix/nongki.tsv"
+          [ -f "$FILE" ] || { echo "::error::未找到 $FILE"; exit 1; }
+          SCOPE="${{ inputs.series }}"
+
+          JSON="[]"
+          while IFS='|' read -r NAME SERIES ARCH SRC BR DEF IMG; do
+            [ -z "$NAME" ] && continue
+            if [ -n "$SCOPE" ] && [ "$SCOPE" != "All" ] && [ "$SCOPE" != "$SERIES" ]; then
+              continue
+            fi
+            JSON=$(echo "$JSON" | jq -c \
+              --arg n "$NAME" --arg s "$SERIES" --arg a "$ARCH" --arg src "$SRC" \
+              --arg b "$BR" --arg d "$DEF" --arg i "$IMG" \
+              '. + [{"name":$n,"kernel_series":$s,"arch":$a,"kernel_source":$src,"kernel_source_branch":$b,"defconfig":$d,"image_name":$i}]')
+          done < <(grep -vE '^[[:space:]]*(#|$)' "$FILE")
+
+          echo "matrix=$JSON" >> "$GITHUB_OUTPUT"
+          COUNT="$(echo "$JSON" | jq 'length')"
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "系列=$SCOPE -> 目标数=$COUNT"
+          echo "$JSON" | jq -r '.[] | "  \(.name) (\(.kernel_series)/\(.arch))"'
+
+  build:
+    name: "${{ matrix.p.name }}"
+    needs: prepare
+    if: needs.prepare.outputs.count != '0'
+    strategy:
+      fail-fast: false
+      matrix:
+        p: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    uses: ./.github/workflows/non-gki-build.yml
+    secrets: inherit
+    with:
+      kernel_series: ${{ matrix.p.kernel_series }}
+      kernel_source: ${{ matrix.p.kernel_source }}
+      kernel_source_branch: ${{ matrix.p.kernel_source_branch }}
+      defconfig: ${{ matrix.p.defconfig }}
+      image_name: ${{ matrix.p.image_name }}
+      arch: ${{ matrix.p.arch }}
+      ksu_variant: ${{ inputs.ksu_variant }}
+      ksu_ref: ""
+      hook_mode: ${{ inputs.hook_mode }}
+      use_susfs: ${{ inputs.use_susfs }}
+      use_llvm: ${{ inputs.use_llvm }}
+      clang_branch: ""
+      clang_version: ""
+      extra_defconfig: ""
+      extra_make_args: ""
+      disable_lto: false
+      disable_cc_werror: true
+      need_dtbo: false
+      publish_release: ${{ inputs.publish_release }}

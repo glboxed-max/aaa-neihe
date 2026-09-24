@@ -23,13 +23,15 @@ Android GKI 内核自动化构建（GitHub Actions）。基于 [jiuxiao226/Kerne
 │  ├─ rekernel/                 # Re-Kernel 驱动
 │  └─ kpm/                      # KPM 镜像补丁（编译后）
 ├─ matrix/
-│  └─ versions.tsv             # 矩阵版本表（android|kernel|sub|patch|revision）
+│  ├─ versions.tsv             # GKI 矩阵版本表（android|kernel|sub|patch|revision）
+│  └─ nongki.tsv               # 非 GKI 批量 profile 表（name|series|arch|source|branch|defconfig|image）
 ├─ nongki/
 │  └─ legacy_ksu_hooks.sh      # 4.x/5.4 手动 hook 补丁（KernelSU 上游）
 └─ workflows/
    ├─ build-kernel.yml          # GKI 构建入口（workflow_dispatch / workflow_call）
    ├─ matrix-build.yml          # GKI 矩阵构建入口
-   └─ non-gki-build.yml         # 非 GKI（4.x / 5.4）构建入口
+   ├─ non-gki-build.yml         # 非 GKI（4.x / 5.4）构建入口（可复用 workflow_call）
+   └─ non-gki-matrix.yml        # 非 GKI 批量构建入口
 ```
 
 ---
@@ -187,6 +189,15 @@ defconfig=vendor/wayne_defconfig
 image_name=Image.gz-dtb
 ```
 > 换你自己的设备时，把上面四项改成你的内核仓库/分支/defconfig/产物名即可。
+
+### 批量构建
+工作流 **`非 GKI 批量构建`**（`.github/workflows/non-gki-matrix.yml`）读取 **`.github/matrix/nongki.tsv`**，按系列扇出。
+
+- 表格格式：`name|series|arch|source|branch|defconfig|image`，`#` 开头为注释。
+- 只有**未注释**的行参与构建；默认启用 `wayne-4.19` 一个 profile，其它系列（4.4/4.9/4.14/5.4）为注释示例，核对 defconfig/分支后取消注释即可。
+- 入参 `series` 可只构建某一系列，或 `All` 构建所有启用项。
+
+> 单次构建用 `非 GKI 内核构建（4.x / 5.4）`；要一次跑多个设备/系列用 `非 GKI 批量构建`。
 
 ---
 
