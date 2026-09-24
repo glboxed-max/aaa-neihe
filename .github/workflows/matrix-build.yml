@@ -1,7 +1,8 @@
 name: 矩阵内核构建
 
 # ============================================================
-#  一次触发，按 Android 版本扇出多个内核构建
+#  一次触发，按范围扇出多个内核构建
+#  版本表：.github/matrix/versions.tsv
 #  每个目标调用可复用工作流 build-kernel.yml
 # ============================================================
 
@@ -11,18 +12,56 @@ permissions:
 on:
   workflow_dispatch:
     inputs:
-      android_scope:
-        description: "构建范围（All=全部 Android 版本）"
+      # ==================== 构建范围 ====================
+      build_scope:
+        description: "构建范围：全部版本 / 5系列 / 6系列 / 单独指定"
         required: true
         type: choice
-        options: [All, android12, android13, android14, android15, android16]
-        default: All
+        options:
+          - "全部版本"
+          - "5系列"
+          - "6系列"
+          - "单独指定"
+        default: "全部版本"
       sub_version_mode:
-        description: "子版本范围"
+        description: "子版本：最新子版本（每组合取最新一档）/ 全部子版本"
         required: true
         type: choice
-        options: ["Latest(最新可用)", "All(全部)"]
-        default: "Latest(最新可用)"
+        options:
+          - "最新子版本"
+          - "全部子版本"
+        default: "最新子版本"
+
+      # ==================== 单独指定（仅 build_scope=单独指定 时生效） ====================
+      android_version:
+        description: "单独指定：Android 版本"
+        required: false
+        type: choice
+        options: [android12, android13, android14, android15, android16]
+        default: android14
+      kernel_version:
+        description: "单独指定：内核版本"
+        required: false
+        type: choice
+        options: ["5.10", "5.15", "6.1", "6.6", "6.12"]
+        default: "6.1"
+      sub_level:
+        description: "单独指定：子版本号（如 172）"
+        required: false
+        type: string
+        default: "172"
+      os_patch_level:
+        description: "单独指定：补丁级别（如 2026-06）"
+        required: false
+        type: string
+        default: "2026-06"
+      revision:
+        description: "单独指定：Android 12 GKI 修订号（仅 android12 用）"
+        required: false
+        type: string
+        default: "r1"
+
+      # ==================== KernelSU / 管理器 ====================
       ksu_variant:
         description: "KSU 变体"
         required: true
@@ -45,6 +84,8 @@ on:
         required: false
         type: string
         default: ""
+
+      # ==================== 功能开关 ====================
       use_susfs:
         description: "启用 SUSFS"
         required: false
@@ -104,126 +145,62 @@ jobs:
       matrix: ${{ steps.gen.outputs.matrix }}
       count: ${{ steps.gen.outputs.count }}
     steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
       - name: 生成矩阵
         id: gen
         shell: bash
         run: |
           set -euo pipefail
-          SCOPE="${{ inputs.android_scope }}"
+          SCOPE="${{ inputs.build_scope }}"
           MODE="${{ inputs.sub_version_mode }}"
+          TABLE_FILE="$GITHUB_WORKSPACE/.github/matrix/versions.tsv"
 
-          # 格式: android|kernel|sub_level|os_patch_level|revision
-          # 列表参考 jiuxiao226/KernelSU-Actions 与 WildKernels/GKI_KernelSU_SUSFS
-          TABLE="android12|5.10|66|2022-01|r11
-          android12|5.10|81|2022-03|r11
-          android12|5.10|101|2022-04|r28
-          android12|5.10|110|2022-07|r1
-          android12|5.10|117|2022-09|r1
-          android12|5.10|136|2022-11|r15
-          android12|5.10|149|2023-01|r1
-          android12|5.10|160|2023-03|r1
-          android12|5.10|168|2023-04|r9
-          android12|5.10|177|2023-07|r3
-          android12|5.10|185|2023-09|r1
-          android12|5.10|198|2024-01|r17
-          android12|5.10|205|2024-03|r1
-          android12|5.10|209|2024-05|r13
-          android12|5.10|218|2024-08|r14
-          android12|5.10|226|2024-11|r8
-          android12|5.10|233|2025-02|r1
-          android12|5.10|236|2025-05|r1
-          android12|5.10|237|2025-06|r1
-          android12|5.10|240|2025-09|r1
-          android12|5.10|246|2025-12|r1
-          android12|5.10|X|lts|r1
-          android13|5.15|74|2023-01|r1
-          android13|5.15|78|2023-03|r1
-          android13|5.15|94|2023-05|r1
-          android13|5.15|104|2023-07|r1
-          android13|5.15|119|2023-09|r1
-          android13|5.15|123|2023-11|r1
-          android13|5.15|137|2024-01|r1
-          android13|5.15|144|2024-03|r1
-          android13|5.15|148|2024-05|r1
-          android13|5.15|149|2024-07|r1
-          android13|5.15|151|2024-08|r1
-          android13|5.15|153|2024-09|r1
-          android13|5.15|167|2024-11|r1
-          android13|5.15|170|2025-01|r1
-          android13|5.15|178|2025-03|r1
-          android13|5.15|180|2025-05|r1
-          android13|5.15|185|2025-07|r1
-          android13|5.15|189|2025-09|r1
-          android13|5.15|194|2025-12|r1
-          android13|5.15|X|lts|r1
-          android14|6.1|25|2023-10|r1
-          android14|6.1|43|2023-11|r1
-          android14|6.1|57|2024-01|r1
-          android14|6.1|68|2024-03|r1
-          android14|6.1|75|2024-05|r1
-          android14|6.1|78|2024-06|r1
-          android14|6.1|84|2024-07|r1
-          android14|6.1|90|2024-08|r1
-          android14|6.1|93|2024-09|r1
-          android14|6.1|99|2024-10|r1
-          android14|6.1|112|2024-11|r1
-          android14|6.1|115|2024-12|r1
-          android14|6.1|118|2025-01|r1
-          android14|6.1|124|2025-02|r1
-          android14|6.1|128|2025-03|r1
-          android14|6.1|129|2025-04|r1
-          android14|6.1|134|2025-05|r1
-          android14|6.1|138|2025-06|r1
-          android14|6.1|141|2025-07|r1
-          android14|6.1|145|2025-09|r1
-          android14|6.1|157|2025-12|r1
-          android14|6.1|162|2026-03|r1
-          android14|6.1|X|lts|r1
-          android15|6.6|50|2024-10|r1
-          android15|6.6|56|2024-11|r1
-          android15|6.6|57|2024-12|r1
-          android15|6.6|58|2025-01|r1
-          android15|6.6|66|2025-02|r1
-          android15|6.6|77|2025-03|r1
-          android15|6.6|82|2025-04|r1
-          android15|6.6|87|2025-05|r1
-          android15|6.6|89|2025-06|r1
-          android15|6.6|92|2025-07|r1
-          android15|6.6|98|2025-09|r1
-          android15|6.6|102|2025-10|r1
-          android15|6.6|118|2026-01|r1
-          android15|6.6|X|lts|r1
-          android16|6.12|23|2025-06|r1
-          android16|6.12|30|2025-07|r1
-          android16|6.12|38|2025-09|r1
-          android16|6.12|58|2025-12|r1
-          android16|6.12|X|lts|r1"
+          if [ ! -f "$TABLE_FILE" ]; then
+            echo "::error::未找到版本表 $TABLE_FILE"
+            exit 1
+          fi
 
-          # 选取要构建的行：Latest 模式每个版本只取 sub_level 最大的数值档（忽略 X/lts）
-          if [ "$MODE" = "All(全部)" ]; then
-            ROWS="$TABLE"
+          if [ "$SCOPE" = "单独指定" ]; then
+            ROWS="${{ inputs.android_version }}|${{ inputs.kernel_version }}|${{ inputs.sub_level }}|${{ inputs.os_patch_level }}|${{ inputs.revision }}"
           else
-            ROWS=""
-            for A in android12 android13 android14 android15 android16; do
-              R="$(echo "$TABLE" | awk -F'|' -v a="$A" '$1==a && $3 ~ /^[0-9]+$/ {print $0}' | sort -t'|' -k3,3n | tail -n1)"
-              [ -n "$R" ] && ROWS="${ROWS}${R}"$'\n'
-            done
+            ALL="$(grep -vE '^[[:space:]]*(#|$)' "$TABLE_FILE")"
+
+            case "$SCOPE" in
+              "5系列") RE='^5\.' ;;
+              "6系列") RE='^6\.' ;;
+              *)       RE='.' ;;
+            esac
+            FILTERED="$(printf '%s\n' "$ALL" | awk -F'|' -v re="$RE" '$2 ~ re {print}')"
+
+            if [ "$MODE" = "全部子版本" ]; then
+              ROWS="$FILTERED"
+            else
+              ROWS=""
+              while IFS= read -r KEY; do
+                [ -z "$KEY" ] && continue
+                A="${KEY%%|*}"; K="${KEY##*|}"
+                R="$(printf '%s\n' "$FILTERED" | awk -F'|' -v a="$A" -v k="$K" \
+                     '$1==a && $2==k && $3 ~ /^[0-9]+$/ {print}' | sort -t'|' -k3,3n | tail -n1)"
+                [ -n "$R" ] && ROWS="${ROWS}${R}"$'\n'
+              done < <(printf '%s\n' "$FILTERED" | awk -F'|' '{print $1"|"$2}' | sort -u)
+            fi
           fi
 
           JSON="[]"
           while IFS='|' read -r A K S P R; do
             [ -z "$A" ] && continue
             [ -z "$R" ] && R=r1
-            if [ "$SCOPE" != "All" ] && [ "$SCOPE" != "$A" ]; then
-              continue
-            fi
             JSON=$(echo "$JSON" | jq -c --arg a "$A" --arg k "$K" --arg s "$S" --arg p "$P" --arg r "$R" \
               '. + [{"android_version":$a,"kernel_version":$k,"sub_level":$s,"os_patch_level":$p,"revision":$r}]')
           done <<< "$ROWS"
 
           echo "matrix=$JSON" >> "$GITHUB_OUTPUT"
-          echo "count=$(echo "$JSON" | jq 'length')" >> "$GITHUB_OUTPUT"
-          echo "将构建 $(echo "$JSON" | jq 'length') 个目标"
+          COUNT="$(echo "$JSON" | jq 'length')"
+          echo "count=$COUNT" >> "$GITHUB_OUTPUT"
+          echo "范围=$SCOPE 子版本=$MODE -> 目标数=$COUNT"
+          echo "$JSON" | jq -r '.[] | "  \(.android_version)-\(.kernel_version).\(.sub_level)-\(.os_patch_level)"'
 
   build:
     name: "${{ matrix.target.android_version }}-${{ matrix.target.kernel_version }}.${{ matrix.target.sub_level }}"

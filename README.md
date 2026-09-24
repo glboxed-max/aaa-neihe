@@ -22,6 +22,8 @@ Android GKI 内核自动化构建（GitHub Actions）。基于 [jiuxiao226/Kerne
 │  ├─ networking/               # 网络增强（IPSet + BBR）
 │  ├─ rekernel/                 # Re-Kernel 驱动
 │  └─ kpm/                      # KPM 镜像补丁（编译后）
+├─ matrix/
+│  └─ versions.tsv             # 矩阵版本表（android|kernel|sub|patch|revision）
 └─ workflows/
    ├─ build-kernel.yml          # 构建入口（workflow_dispatch / workflow_call）
    └─ matrix-build.yml          # 矩阵构建入口
@@ -88,26 +90,45 @@ Android GKI 内核自动化构建（GitHub Actions）。基于 [jiuxiao226/Kerne
 
 ## 矩阵构建
 
-工作流 **`矩阵内核构建`**（`.github/workflows/matrix-build.yml`）可按 Android 版本一次扇出多个内核构建。
+工作流 **`矩阵内核构建`**（`.github/workflows/matrix-build.yml`）可按范围一次扇出多个内核构建。版本表在 **`.github/matrix/versions.tsv`**。
 
-- `android_scope`：`All`（全部 Android 版本）或指定单个版本，默认 `All`。
-- `sub_version_mode`：
-  - `Latest(最新可用)`（默认）—— 每个版本只拉 **sub_level 最大的数值档**；
-  - `All(全部)` —— 跑该版本的全部子版本。
-- 默认组合 = 每个 Android 版本最新一档，即 **5 个目标**。
-- 完整子版本表（`TABLE`，含 `revision`）已按 jiuxiao226 / WildKernels 的矩阵补全，共 84 档（a12=22 / a13=20 / a14=23 / a15=14 / a16=5），仅在 `All(全部)` 模式使用：
-  | 范围 | 内核 | 最新可用档 |
-  |---|---|---|
-  | android12 | 5.10 | 246 / 2025-12 |
-  | android13 | 5.15 | 194 / 2025-12 |
-  | android14 | 6.1 | 162 / 2026-03 |
-  | android15 | 6.6 | 118 / 2026-01 |
-  | android16 | 6.12 | 58 / 2025-12 |
-- 可按需在 `TABLE` 中增删行；`revision` 仅 android12 构建 boot 镜像时使用。
-- 其余选项与单次构建一致，会透传给 `build-kernel.yml`。
-- 开启 `publish_release` 时，每个目标会各自发布一个 Release（tag 含 Android/内核/子版本/变体，互不冲突）。
+### 范围选择
+| 选项 | 含义 |
+|---|---|
+| `build_scope` = `全部版本` | 所有 Android 版本 |
+| `build_scope` = `5系列` | 只看 5.x 内核（5.10 / 5.15） |
+| `build_scope` = `6系列` | 只看 6.x 内核（6.1 / 6.6 / 6.12） |
+| `build_scope` = `单独指定` | 只构建下面单独填写的那一个组合 |
+| `sub_version_mode` = `最新子版本` | 每个 (Android,内核) 组合只取 **sub_level 最大** 的一档 |
+| `sub_version_mode` = `全部子版本` | 取该范围内的**全部**子版本 |
 
-> ⚠️ 只有把 `sub_version_mode` 选成 `All(全部)` 搭配 `android_scope=All` 时才会排入全部 84 个构建，非常耗时/耗额度。
+> 「单独指定」时使用 `android_version` / `kernel_version` / `sub_level` / `os_patch_level` / `revision` 五个输入。
+
+### 常用组合
+| 想要的效果 | 选择 |
+|---|---|
+| 每版本最新（默认） | `全部版本` + `最新子版本` → 7 个目标 |
+| 全部版本 × 全部子版本 | `全部版本` + `全部子版本` → 136 个目标 |
+| 5 系列全部子版本 | `5系列` + `全部子版本` |
+| 6 系列全部子版本 | `6系列` + `全部子版本` |
+| 只构建一个 | `单独指定` + 填 5 个输入 |
+
+### 版本表（`versions.tsv`）
+格式：`android|kernel|sub_level|os_patch_level|revision`，`#` 开头为注释，`X|lts` 表示 lts 分支（“最新子版本”模式自动忽略）。当前收录：
+
+| 组合 | 档数 | 最新一档 |
+|---|---|---|
+| android12-5.10 | 24 | 252 / 2026-04 |
+| android13-5.10 | 22 | 252 / 2026-04 |
+| android13-5.15 | 23 | 206 / 2026-06 |
+| android14-5.15 | 18 | 202 / 2026-04 |
+| android14-6.1 | 24 | 172 / 2026-06 |
+| android15-6.6 | 18 | 139 / 2026-07 |
+| android16-6.12 | 7 | 81 / 2026-06 |
+
+> ⚠️ `全部子版本`（尤其 `全部版本` + `全部子版本`）会一次排入大量构建，非常耗时/耗额度；建议先单个组合验证通过。
+
+> 其余选项与单次构建一致，会透传给 `build-kernel.yml`。开启 `publish_release` 时每个目标各自发一个 Release。
 
 ---
 
