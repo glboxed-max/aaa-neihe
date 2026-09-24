@@ -60,6 +60,23 @@ runs:
           CONFIG_NET_SCH_CAKE=y
           CONFIG_WIREGUARD=y
 
+    - name: Keep tcp_bic built-in (avoid unlisted module)
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "$KERNEL_ROOT/common"
+        DEF="$DEFCONFIG"
+        if grep -qE '^config TCP_CONG_BIC$' net/ipv4/Kconfig; then
+          if grep -qE '^CONFIG_TCP_CONG_BIC=' "$DEF"; then
+            sed -i -E 's|^CONFIG_TCP_CONG_BIC=.*|CONFIG_TCP_CONG_BIC=y|' "$DEF"
+          elif grep -qE '^# CONFIG_TCP_CONG_BIC is not set' "$DEF"; then
+            sed -i -E 's|^# CONFIG_TCP_CONG_BIC is not set|CONFIG_TCP_CONG_BIC=y|' "$DEF"
+          else
+            echo 'CONFIG_TCP_CONG_BIC=y' >> "$DEF"
+          fi
+          echo "已内建 CONFIG_TCP_CONG_BIC=y（避免 tcp_bic.ko 未列入 module_outs）"
+        fi
+
     - name: Patch 5.10 ip_set max
       if: inputs.kernel_version == '5.10'
       shell: bash
