@@ -223,6 +223,7 @@ jobs:
       custom_ref: ${{ inputs.custom_ref }}
       ksu_version: ${{ inputs.ksu_version }}
       use_susfs: ${{ inputs.use_susfs }}
+      susfs_commit: ""
       use_zram: ${{ inputs.use_zram }}
       zram_full_algo: ${{ inputs.zram_full_algo }}
       zram_extra_algos: ""

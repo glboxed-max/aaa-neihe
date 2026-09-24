@@ -70,6 +70,11 @@ on:
         required: true
         type: boolean
         default: true
+      susfs_commit:
+        description: "SUSFS 固定提交（留空=使用经过验证的默认 pin；填 -1 可关闭 SUSFS）"
+        required: false
+        type: string
+        default: ""
       use_zram:
         description: "启用 ZRAM 增强算法"
         required: true
@@ -179,6 +184,10 @@ on:
         required: false
         type: boolean
         default: true
+      susfs_commit:
+        required: false
+        type: string
+        default: ""
       use_zram:
         required: false
         type: boolean
@@ -378,12 +387,32 @@ jobs:
           if [ "${{ inputs.use_susfs }}" = "true" ]; then
             SUSFS_BRANCH="gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}"
             echo "克隆 SUSFS (分支: $SUSFS_BRANCH)..."
-            if [ "${{ inputs.ksu_variant }}" = "SukiSU" ]; then
-              retry_clone https://github.com/ShirkNeko/susfs4ksu.git "$SUSFS_BRANCH" susfs4ksu || \
-                retry_clone https://gitlab.com/simonpunk/susfs4ksu.git "$SUSFS_BRANCH" susfs4ksu
-            else
-              retry_clone https://gitlab.com/simonpunk/susfs4ksu.git "$SUSFS_BRANCH" susfs4ksu
+            retry_clone https://gitlab.com/simonpunk/susfs4ksu.git "$SUSFS_BRANCH" susfs4ksu
+
+            # 固定到经过验证的提交：最新 SUSFS 会引用 KernelSU 变体尚未提供的符号
+            # （ksu_handle_post_execveat_sucompat），必须与 KernelSU 源码版本匹配。
+            PIN="${{ inputs.susfs_commit }}"
+            if [ "$PIN" = "-1" ]; then
+              echo "susfs_commit=-1，跳过 SUSFS pin（使用分支 tip）"
+              PIN=""
+            elif [ -z "$PIN" ]; then
+              case "${{ inputs.android_version }}-${{ inputs.kernel_version }}" in
+                android12-5.10) PIN=ec785f47d49f7b3871ca9356f450411020af7017 ;;
+                android13-5.10) PIN=ed3d6d9c9a2652e1c70f153f5358701e996d646c ;;
+                android13-5.15) PIN=bca0d2333c1a7d717e7278b019d7af7ba1d16005 ;;
+                android14-5.15) PIN=d54b51724afa912c4c99bb99731354ce934d1889 ;;
+                android14-6.1)  PIN=4fc9c1898ea66f51847cdbc0d1473ea4ef525a70 ;;
+                android15-6.6)  PIN=937215cb3a1b1f333d764c366c7a49972fa8e7a0 ;;
+                android16-6.12) PIN=7d91da2d2ce056d1abf378d9199aaf1072d37ab0 ;;
+                *) PIN="" ;;
+              esac
             fi
+            if [ -n "$PIN" ]; then
+              echo "固定 SUSFS 到 $PIN"
+              git -C susfs4ksu fetch --depth 1 origin "$PIN" 2>/dev/null || echo "::warning::SUSFS pin fetch 失败，沿用分支 tip"
+              git -C susfs4ksu checkout --detach "$PIN" 2>/dev/null || echo "::warning::SUSFS pin checkout 失败，沿用分支 tip"
+            fi
+
             echo "SUSFS_LATEST_COMMIT_DATE=$(git -C susfs4ksu log -1 --date=format:'%Y-%m-%d %H:%M:%S' --format='%cd')" >> "$GITHUB_ENV"
           fi
 
