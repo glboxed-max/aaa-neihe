@@ -338,9 +338,23 @@ jobs:
       - name: 下载工具链
         if: steps.cache-toolchain.outputs.cache-hit != 'true'
         run: |
+          set -euo pipefail
           BRANCH=main-kernel-build-2024
-          git clone https://android.googlesource.com/kernel/prebuilts/build-tools -b "$BRANCH" --depth 1 kernel-build-tools
-          git clone https://android.googlesource.com/platform/system/tools/mkbootimg -b "$BRANCH" --depth 1 mkbootimg
+          clone_retry() {
+            local url="$1" dir="$2" n=0
+            until [ "$n" -ge 3 ]; do
+              if timeout 600 git clone "$url" -b "$BRANCH" --depth 1 "$dir"; then
+                return 0
+              fi
+              n=$((n+1))
+              echo "::warning::克隆 $url 超时/失败，重试 $n/3"
+              rm -rf "$dir"
+              sleep 10
+            done
+            return 1
+          }
+          clone_retry https://android.googlesource.com/kernel/prebuilts/build-tools kernel-build-tools
+          clone_retry https://android.googlesource.com/platform/system/tools/mkbootimg mkbootimg
 
       - name: 生成签名密钥
         run: |
