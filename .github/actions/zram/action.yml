@@ -1,0 +1,124 @@
+name: Apply ZRAM Enhancements
+description: 升级 LZ4（含 NEON），可选集成完整 LZ4K/LZ4KD/LZ4K_OPLUS 算法，并写入 ZRAM 配置（6.12 自动跳过 legacy 算法）
+
+inputs:
+  kernel_version:
+    required: true
+  android_version:
+    required: true
+  full_algo:
+    description: "是否启用完整算法支持（LZ4K/LZ4KD/LZ4K_OPLUS）"
+    required: false
+    default: "false"
+  extra_algos:
+    description: "额外算法（逗号分隔，如 lzo,lz4,deflate,zstd,842）"
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Upgrade LZ4 and apply algorithm stack
+      shell: bash
+      run: |
+        set -uo pipefail
+        cd "$KERNEL_ROOT/common"
+        K="${{ inputs.kernel_version }}"
+
+        if [ "$K" = "6.12" ]; then
+          echo "检测到 6.12 新式 zram backend，跳过 legacy LZ4K/LZ4KD/LZ4K_OPLUS 补丁栈。"
+          exit 0
+        fi
+
+        # ---- LZ4 升级 + NEON 加速 ----
+        if [ -d "$ABK_ASSETS/zram/lz4" ]; then
+          echo "升级 LZ4..."
+          rm -f lib/lz4/lz4_compress.c lib/lz4/lz4_decompress.c lib/lz4/lz4defs.h lib/lz4/lz4hc_compress.c
+          cp -r "$ABK_ASSETS/zram/lz4/." ./lib/lz4/
+          [ -d "$ABK_ASSETS/zram/include/linux" ] && cp -r "$ABK_ASSETS/zram/include/linux/." ./include/linux/
+          [ -f "$ABK_ASSETS/zram/apply_lz4_neon.sh" ] && bash "$ABK_ASSETS/zram/apply_lz4_neon.sh" || true
+
+          if [ -f fs/f2fs/Makefile ] && ! grep -qF 'f2fs-$(CONFIG_F2FS_IOSTAT) += iostat.o' fs/f2fs/Makefile; then
+            echo 'f2fs-$(CONFIG_F2FS_IOSTAT) += iostat.o' >> fs/f2fs/Makefile
+          fi
+        else
+          echo "::warning::未找到 ABK zram 资产（$ABK_ASSETS/zram），跳过 LZ4 升级"
+        fi
+
+        # ---- 完整算法支持 ----
+        if [ "${{ inputs.full_algo }}" != "true" ]; then
+          echo "未启用完整算法支持，仅保留 LZ4 升级。"
+          exit 0
+        fi
+
+        if [ ! -d "$SUKISU_PATCHES/other/zram/lz4k" ]; then
+          echo "::warning::SukiSU_patch 缺少 other/zram/lz4k，跳过完整算法"
+          exit 0
+        fi
+
+        echo "集成 LZ4K/LZ4KD/LZ4K_OPLUS..."
+        cp -r "$SUKISU_PATCHES/other/zram/lz4k/include/linux/." ./include/linux/
+        cp -r "$SUKISU_PATCHES/other/zram/lz4k/lib/." ./lib/
+        cp -r "$SUKISU_PATCHES/other/zram/lz4k/crypto/." ./crypto/
+        cp -r "$SUKISU_PATCHES/other/zram/lz4k_oplus" ./lib/
+
+        for p in lz4kd.patch lz4k_oplus.patch; do
+          f="$SUKISU_PATCHES/other/zram/zram_patch/$K/$p"
+          if [ ! -f "$f" ]; then
+            echo "::warning::$p 不存在，跳过 $K 的集成补丁"
+            continue
+          fi
+          cp "$f" ./
+          patch -p1 -F 3 < "$p" || echo "::warning::$p 应用失败（可能已应用或上下文不匹配）"
+        done
+
+    - name: Enable ZRAM configs
+      uses: ./.github/actions/set-kernel-config
+      with:
+        config_list: |
+          CONFIG_ZSMALLOC=y
+          CONFIG_ZRAM=y
+          CONFIG_CRYPTO_LZO=y
+          CONFIG_MODULE_SIG=n
+
+    - name: Enable ZRAM algorithm configs
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "$KERNEL_ROOT"
+        CONFIG_FILE="$DEFCONFIG"
+        K="${{ inputs.kernel_version }}"
+
+        append_if_defined() {
+          local cfg="$1"
+          grep -qE "^${cfg}=|^# ${cfg} is not set" "$CONFIG_FILE" \
+            || echo "${cfg}=y" >> "$CONFIG_FILE"
+        }
+
+        if [ "$K" != "6.12" ]; then
+          echo "CONFIG_ZRAM_DEF_COMP_LZ4KD=y" >> "$CONFIG_FILE"
+          if [ -f "$ABK_ASSETS/config/zram.config" ]; then
+            cat "$ABK_ASSETS/config/zram.config" >> "$CONFIG_FILE"
+          fi
+        fi
+
+        # 额外算法 → 打开对应 crypto 配置
+        if [ -n "${{ inputs.extra_algos }}" ]; then
+          IFS=',' read -ra ALGOS <<< "${{ inputs.extra_algos }}"
+          for algo in "${ALGOS[@]}"; do
+            algo="$(echo "$algo" | tr -d ' ')"
+            [ -z "$algo" ] && continue
+            UPPER="$(echo "$algo" | tr '[:lower:]-' '[:upper:]_')"
+            case "$algo" in
+              842) append_if_defined CONFIG_CRYPTO_842 ;;
+              *)   append_if_defined "CONFIG_CRYPTO_${UPPER}" ;;
+            esac
+          done
+        fi
+
+        # 14+ 将 zram/zsmalloc 从模块列表移出，避免构建为 .ko
+        if [ "${{ inputs.android_version }}" = "android14" ] || [ "${{ inputs.android_version }}" = "android15" ] || [ "${{ inputs.android_version }}" = "android16" ]; then
+          if [ -f "$KERNEL_ROOT/common/modules.bzl" ]; then
+            sed -i 's|"drivers/block/zram/zram\.ko",||g; s|"mm/zsmalloc\.ko",||g' "$KERNEL_ROOT/common/modules.bzl"
+          fi
+        fi

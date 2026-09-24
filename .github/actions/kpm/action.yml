@@ -1,0 +1,53 @@
+name: Apply KPM Image Patch
+description: 编译完成后对 Image 执行 KPM patch_linux（仅 SukiSU/ReSukiSU）
+
+inputs:
+  android_version:
+    required: true
+  kernel_version:
+    required: true
+  kpm_password:
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: Patch Image with KPM
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        if [ "${BUILD_METHOD:-}" = "make" ] || { [ -z "${BUILD_METHOD:-}" ] && { [ "${{ inputs.android_version }}" = "android12" ] || [ "${{ inputs.android_version }}" = "android13" ]; }; }; then
+          TARGET_PATH="$KERNEL_ROOT/out/${{ inputs.android_version }}-${{ inputs.kernel_version }}/dist"
+        else
+          TARGET_PATH="$KERNEL_ROOT/bazel-bin/common/kernel_aarch64"
+        fi
+
+        [ -f "$TARGET_PATH/Image" ] || { echo "::error::未找到 Image: $TARGET_PATH/Image"; exit 1; }
+        [ -f "$SUKISU_PATCHES/kpm/patch_linux" ] || { echo "::error::未找到 patch_linux"; exit 1; }
+
+        cp "$TARGET_PATH/Image" "$TARGET_PATH/Image.kpm-backup"
+        cp -r "$SUKISU_PATCHES/kpm/patch_linux" "$TARGET_PATH/patch"
+        cd "$TARGET_PATH"
+        chmod +x patch
+
+        ok=true
+        if [ -n "${{ inputs.kpm_password }}" ]; then
+          ./patch -s "${{ inputs.kpm_password }}" || ok=false
+        else
+          ./patch || ok=false
+        fi
+
+        [ -f oImage ] || ok=false
+        if [ "$ok" != true ]; then
+          mv "$TARGET_PATH/Image.kpm-backup" "$TARGET_PATH/Image"
+          rm -f "$TARGET_PATH/patch"
+          echo "::error::KPM 补丁失败，已还原原始 Image"
+          exit 1
+        fi
+
+        rm -f Image
+        mv oImage Image
+        rm -f Image.kpm-backup patch
+        echo "KPM 补丁完成"

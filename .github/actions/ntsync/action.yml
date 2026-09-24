@@ -1,0 +1,71 @@
+name: Apply NTSync
+description: 应用 NTsync 兼容补丁并启用 CONFIG_NTSYNC
+
+inputs:
+  version:
+    description: "KMI，如 android14-6.1"
+    required: true
+  kernel_version:
+    description: "内核版本，如 6.1"
+    required: true
+  sublevel:
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Apply NTSync patch
+      shell: bash
+      run: |
+        set -uo pipefail
+        cd "$KERNEL_ROOT/common"
+        V="${{ inputs.version }}"
+        K="${{ inputs.kernel_version }}"
+        SUB="${{ inputs.sublevel }}"
+        PATCH_DIR="$KERNEL_PATCHES/common/ntsync"
+        ACTION_PATCHES="${{ github.action_path }}/patches"
+
+        apply() {
+          local f="$1"
+          if [ ! -f "$f" ]; then
+            echo "::warning::补丁不存在，跳过: $f"
+            return 0
+          fi
+          patch -p1 --forward < "$f" || echo "::warning::补丁应用失败(可能已应用): $(basename "$f")"
+        }
+
+        if [ "$V" = "android16-6.12" ]; then
+          rm -f include/uapi/linux/ntsync.h drivers/misc/ntsync.c
+        fi
+
+        # lockdep 前置补丁（旧基线需要）
+        if [ "$V" = "android12-5.10" ] && [ "$SUB" -le 66 ] 2>/dev/null; then
+          patch -p1 -N < "$ACTION_PATCHES/0001-lockdep-detect-recursive-read.patch" || true
+        fi
+        if { [ "$V" = "android12-5.10" ] && [ "$SUB" -le 209 ]; } 2>/dev/null || \
+           { [ "$V" = "android13-5.10" ] && [ "$SUB" -le 210 ]; } 2>/dev/null; then
+          patch -p1 -N < "$ACTION_PATCHES/0002-lockdep-assert-none-held.patch" || true
+        fi
+
+        # KMI 兼容补丁
+        if [ "$V" = "android13-5.10" ]; then
+          apply "$PATCH_DIR/ntsync_compat_android12-5.10.patch"
+        elif [ "$V" = "android14-5.15" ]; then
+          apply "$PATCH_DIR/ntsync_compat_android13-5.15.patch"
+        else
+          apply "$PATCH_DIR/ntsync_compat_${V}.patch"
+        fi
+
+        # 基础补丁
+        apply "$PATCH_DIR/ntsync_base.patch"
+
+        if [ ! -f drivers/misc/ntsync.c ] && [ ! -f include/uapi/linux/ntsync.h ]; then
+          echo "::error::NTsync 补丁完成后未生成 ntsync 源码/UAPI"
+          exit 1
+        fi
+
+    - name: Enable NTSync config
+      uses: ./.github/actions/set-kernel-config
+      with:
+        config_list: |
+          CONFIG_NTSYNC=y

@@ -1,0 +1,44 @@
+name: Setup Build Environment
+description: 初始化 KERNEL_ROOT、全局路径变量并准备 repo 工具
+
+inputs:
+  android_version:
+    required: true
+  kernel_version:
+    required: true
+  sub_level:
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Export build paths and install repo
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        CONFIG="${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.sub_level }}"
+        KERNEL_ROOT="$GITHUB_WORKSPACE/$CONFIG"
+        mkdir -p "$KERNEL_ROOT"
+
+        {
+          echo "CONFIG=$CONFIG"
+          echo "KERNEL_ROOT=$KERNEL_ROOT"
+          echo "DEFCONFIG=$KERNEL_ROOT/common/arch/arm64/configs/gki_defconfig"
+          echo "SUSFS4KSU=$GITHUB_WORKSPACE/susfs4ksu"
+          echo "KERNEL_PATCHES=$GITHUB_WORKSPACE/kernel_patches"
+          echo "SUKISU_PATCHES=$GITHUB_WORKSPACE/SukiSU_patch"
+          echo "ACTION_BUILD=$GITHUB_WORKSPACE/Action-Build"
+          echo "ABK_ASSETS=$GITHUB_WORKSPACE/ABK"
+          echo "ANYKERNEL3=$GITHUB_WORKSPACE/AnyKernel3"
+          echo "AVBTOOL=$GITHUB_WORKSPACE/kernel-build-tools/linux-x86/bin/avbtool"
+          echo "MKBOOTIMG=$GITHUB_WORKSPACE/mkbootimg/mkbootimg.py"
+          echo "UNPACK_BOOTIMG=$GITHUB_WORKSPACE/mkbootimg/unpack_bootimg.py"
+          echo "BOOT_SIGN_KEY_PATH=$GITHUB_WORKSPACE/kernel-build-tools/linux-x86/share/avb/testkey_rsa2048.pem"
+        } >> "$GITHUB_ENV"
+
+        mkdir -p "$GITHUB_WORKSPACE/git-repo"
+        curl -fL https://storage.googleapis.com/git-repo-downloads/repo -o "$GITHUB_WORKSPACE/git-repo/repo"
+        chmod 0755 "$GITHUB_WORKSPACE/git-repo/repo"
+        echo "$GITHUB_WORKSPACE/git-repo" >> "$GITHUB_PATH"
+        echo "REPO=$GITHUB_WORKSPACE/git-repo/repo" >> "$GITHUB_ENV"

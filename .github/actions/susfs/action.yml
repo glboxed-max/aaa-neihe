@@ -1,0 +1,169 @@
+name: Apply SUSFS
+description: 应用 susfs4ksu 主补丁、版本相关修复补丁与 Unicode 绕过修复，并写入 SUSFS 配置
+
+inputs:
+  android_version:
+    required: true
+  kernel_version:
+    required: true
+  sub_level:
+    required: true
+  os_patch_level:
+    required: true
+  variant:
+    required: true
+  susfs_version:
+    required: false
+    default: "2.0.0"
+
+runs:
+  using: composite
+  steps:
+    - name: Apply SUSFS patch
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "$KERNEL_ROOT"
+        A="${{ inputs.android_version }}"
+        K="${{ inputs.kernel_version }}"
+        SUB="${{ inputs.sub_level }}"
+        [[ "$SUB" =~ ^[0-9]+$ ]] || SUB=99999
+        SUSFS_VERSION="${{ inputs.susfs_version }}"
+
+        echo "应用 SUSFS 主补丁..."
+        cp "$SUSFS4KSU/kernel_patches/50_add_susfs_in_gki-${A}-${K}.patch" ./common/
+        cp "$SUSFS4KSU"/kernel_patches/fs/* ./common/fs/
+        cp "$SUSFS4KSU"/kernel_patches/include/linux/* ./common/include/linux/
+
+        if [ "${{ inputs.variant }}" = "Official" ]; then
+          cd ./KernelSU
+          cp "$SUSFS4KSU/kernel_patches/KernelSU/10_enable_susfs_for_ksu.patch" ./
+          if grep -q '^diff --git a/kernel/Makefile b/kernel/Makefile' ./10_enable_susfs_for_ksu.patch \
+            && ! grep -q '^diff --git a/kernel/Kbuild b/kernel/Kbuild' ./10_enable_susfs_for_ksu.patch; then
+            sed -i 's|kernel/Makefile|kernel/Kbuild|g' ./10_enable_susfs_for_ksu.patch
+          fi
+          patch -p1 --forward < 10_enable_susfs_for_ksu.patch || true
+          cd ..
+        else
+          echo "Next/SukiSU/ReSukiSU 使用内置 SUSFS 支持"
+        fi
+
+        cd "$KERNEL_ROOT/common"
+        patch -p1 < "50_add_susfs_in_gki-${A}-${K}.patch" || true
+
+        # ---- 版本相关修复（base.c / namespace.c 等）----
+        FIX_ROOT=""
+        for d in "$KERNEL_PATCHES/wild/susfs_fix_patches/v${SUSFS_VERSION}" \
+                 "$KERNEL_PATCHES/wild/archived/susfs_fix_patches/v${SUSFS_VERSION}" \
+                 "$KERNEL_PATCHES/ksu/susfs_fix_patches/v${SUSFS_VERSION}"; do
+          [ -d "$d" ] && FIX_ROOT="$d" && break
+        done
+        [ -n "$FIX_ROOT" ] || echo "::warning::未找到 susfs_fix_patches/v${SUSFS_VERSION}，跳过版本修复"
+        echo "SUSFS 修复目录: ${FIX_ROOT:-无}"
+
+        if [ "$A-$K" = "android14-6.1" ] && [ -n "$FIX_ROOT" ]; then
+          if [[ "$SUB" -le 141 || "$SUB" -ge 145 ]]; then
+            cp "$FIX_ROOT/a14-6.1/base.c.patch" ./ 2>/dev/null && patch -p1 < base.c.patch || true
+          fi
+          if grep -q 'susfs_is_current_proc_umounted\|SUSFS_IS_INODE_SUS_MAP\|SUSFS_IS_INODE_OPEN_REDIRECT' ./fs/proc/base.c \
+            && ! grep -qF '#include <linux/susfs_def.h>' ./fs/proc/base.c; then
+            if grep -qF '#include <linux/dma-buf.h>' ./fs/proc/base.c; then
+              sed -i '/#include <linux\/dma-buf.h>/a #if defined(CONFIG_KSU_SUSFS_SUS_MAP) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)\n#include <linux\/susfs_def.h>\n#endif' ./fs/proc/base.c
+            else
+              sed -i '/#include <linux\/cpufreq_times.h>/a #if defined(CONFIG_KSU_SUSFS_SUS_MAP) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)\n#include <linux\/susfs_def.h>\n#endif' ./fs/proc/base.c
+            fi
+          fi
+          if [[ "$SUB" -le 75 && "${{ inputs.os_patch_level }}" != "2024-05" ]]; then
+            sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
+          fi
+        fi
+
+        if [ "$A-$K" = "android12-5.10" ] && [ -n "$FIX_ROOT" ]; then
+          if [[ "${{ inputs.os_patch_level }}" == "2024-11" ]] && grep -qF 'vm_flags_clear(new_vma, VM_PAD_MASK);' ./mm/mmap.c; then
+            sed -i 's/vm_flags_clear(new_vma, VM_PAD_MASK);/new_vma->vm_flags \&= ~VM_PAD_MASK;/' ./mm/mmap.c
+          fi
+          [[ "$SUB" -le 209 ]] && sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
+          if [[ "$SUB" -le 117 ]]; then
+            cp "$FIX_ROOT/a12-5.10/fdinfo.c.patch" ./ 2>/dev/null && patch -p1 < fdinfo.c.patch || true
+          fi
+          if [[ "$SUB" -le 43 ]]; then
+            cp "$FIX_ROOT/a12-5.10/base.c.patch" ./ 2>/dev/null && patch -p1 < base.c.patch || true
+          fi
+        fi
+
+        if [ "$A-$K" = "android13-5.15" ] && [ -n "$FIX_ROOT" ]; then
+          if [[ "${{ inputs.os_patch_level }}" == "2024-11" ]] && grep -qF 'vm_flags_clear(new_vma, VM_PAD_MASK);' ./mm/mmap.c; then
+            sed -i 's/vm_flags_clear(new_vma, VM_PAD_MASK);/new_vma->vm_flags \&= ~VM_PAD_MASK;/' ./mm/mmap.c
+          fi
+          if [[ "$SUB" -le 41 ]]; then
+            for p in namespace.c.patch fdinfo.c.patch open.c.patch; do
+              cp "$FIX_ROOT/a13-5.15/$p" ./ 2>/dev/null && patch -p1 < "$p" || true
+            done
+          fi
+          [[ "$SUB" -le 148 && "${{ inputs.os_patch_level }}" != "2024-05" ]] && sed -i -e 's/goto show_pad;/return 0;/' ./fs/proc/task_mmu.c
+        fi
+
+        if [ "$A-$K" = "android15-6.6" ] && [ -n "$FIX_ROOT" ]; then
+          if [[ "$SUB" -ge 98 ]]; then
+            cp "$FIX_ROOT/a15-6.6/base.c.patch" ./ 2>/dev/null && patch -p1 < base.c.patch || true
+          fi
+          if grep -q 'AS_FLAGS_SUS_MAP\|susfs_is_current_proc_umounted\|SUSFS_IS_INODE_SUS_MAP\|SUSFS_IS_INODE_OPEN_REDIRECT' ./fs/proc/base.c \
+            && ! grep -qF 'susfs_def.h' ./fs/proc/base.c; then
+            grep -qF '#include <linux/dma-buf.h>' ./fs/proc/base.c || sed -i '/#include <linux\/cpufreq_times.h>/a #include <linux\/dma-buf.h>' ./fs/proc/base.c
+            sed -i '/#include <linux\/dma-buf.h>/a #endif' ./fs/proc/base.c
+            sed -i '/#include <linux\/dma-buf.h>/a #include <linux\/susfs_def.h>' ./fs/proc/base.c
+            sed -i '/#include <linux\/dma-buf.h>/a #if defined(CONFIG_KSU_SUSFS_SUS_MAP) || defined(CONFIG_KSU_SUSFS_OPEN_REDIRECT)' ./fs/proc/base.c
+          fi
+          if [[ "$SUB" -le 58 ]]; then
+            cp "$FIX_ROOT/a15-6.6/task_mmu.c.patch" ./ 2>/dev/null && patch -p1 < task_mmu.c.patch || true
+          fi
+        fi
+
+        if [ "$A-$K" = "android16-6.12" ]; then
+          SETUID_HOOK="$KERNEL_ROOT/common/drivers/kernelsu/setuid_hook.c"
+          if [ -f "$SETUID_HOOK" ]; then
+            sed -i 's/defined(CONFIG_KSU_MANUAL_HOOK))/!defined(CONFIG_KSU_SUSFS) \&\& defined(CONFIG_KSU_MANUAL_HOOK))/' "$SETUID_HOOK"
+          fi
+          if grep -q 'susfs_is_current_proc_umounted' ./fs/exec.c && ! grep -qF '#include <linux/susfs_def.h>' ./fs/exec.c; then
+            if grep -qF '#include <linux/dma-buf.h>' ./fs/exec.c; then
+              sed -i '/#include <linux\/dma-buf.h>/a #ifdef CONFIG_KSU_SUSFS\n#include <linux\/susfs_def.h>\n#endif' ./fs/exec.c
+            else
+              sed -i '/#include <linux\/ksm.h>/a #ifdef CONFIG_KSU_SUSFS\n#include <linux\/susfs_def.h>\n#endif' ./fs/exec.c
+            fi
+          fi
+        fi
+
+    - name: Apply Unicode bypass fix
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "$KERNEL_ROOT/common"
+        if [ "${{ inputs.kernel_version }}" = "5.10" ] || [ "${{ inputs.kernel_version }}" = "5.15" ]; then
+          NAME="unicode_bypass_fix_6.1-.patch"
+        else
+          NAME="unicode_bypass_fix_6.1+.patch"
+        fi
+        P=""
+        for d in "$KERNEL_PATCHES/common" "$ACTION_BUILD/patches"; do
+          [ -f "$d/$NAME" ] && P="$d/$NAME" && break
+        done
+        if [ -n "$P" ]; then
+          patch -p1 --forward < "$P" || true
+        else
+          echo "::warning::未找到 Unicode 修复补丁: $NAME"
+        fi
+
+    - name: Enable SUSFS configs
+      uses: ./.github/actions/set-kernel-config
+      with:
+        config_list: |
+          CONFIG_KSU_SUSFS=y
+          CONFIG_KSU_SUSFS_SUS_PATH=y
+          CONFIG_KSU_SUSFS_SUS_MOUNT=y
+          CONFIG_KSU_SUSFS_SUS_KSTAT=y
+          CONFIG_KSU_SUSFS_SPOOF_UNAME=y
+          CONFIG_KSU_SUSFS_ENABLE_LOG=y
+          CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS=y
+          CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG=y
+          CONFIG_KSU_SUSFS_OPEN_REDIRECT=y
+          CONFIG_KSU_SUSFS_SUS_MAP=y

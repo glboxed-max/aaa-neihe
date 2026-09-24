@@ -1,0 +1,789 @@
+name: 内核构建流程
+
+# ============================================================
+#  Android GKI 内核构建（SukiSU-Ultra / KernelSU / ReSukiSU / Next）
+#  输出：AnyKernel3 ZIP + boot 镜像
+# ============================================================
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      # ==================== 基础配置 ====================
+      android_version:
+        description: "Android 版本"
+        required: true
+        type: choice
+        options: [android12, android13, android14, android15, android16]
+        default: android14
+      kernel_version:
+        description: "内核版本"
+        required: true
+        type: choice
+        options: ["5.10", "5.15", "6.1", "6.6", "6.12"]
+        default: "6.1"
+      sub_level:
+        description: "子版本号（如 145）"
+        required: true
+        type: string
+        default: "145"
+      os_patch_level:
+        description: "补丁级别（如 2025-09）"
+        required: true
+        type: string
+        default: "2025-09"
+      revision:
+        description: "Android 12 GKI 修订号（如 r1，仅 android12 用）"
+        required: false
+        type: string
+        default: "r1"
+
+      # ==================== KernelSU / 管理器 ====================
+      ksu_variant:
+        description: "KSU 变体"
+        required: true
+        type: choice
+        options: [SukiSU, Official, ReSukiSU, Next, None]
+        default: SukiSU
+      ksu_branch:
+        description: "KSU 分支"
+        required: true
+        type: choice
+        options: ["Stable(标准)", "Dev(开发)", "Latest(最新)", "Other(其他/指定)"]
+        default: "Stable(标准)"
+      custom_ref:
+        description: "自定义管理器 分支/Tag（仅上一步选“其他/指定”时生效，如 main / builtin / v4.2.0）"
+        required: false
+        type: string
+        default: ""
+      ksu_version:
+        description: "强制指定 KSU_VERSION（留空=源码默认；例如 13000）"
+        required: false
+        type: string
+        default: ""
+
+      # ==================== 功能开关 ====================
+      use_susfs:
+        description: "启用 SUSFS（Root 隐藏）"
+        required: true
+        type: boolean
+        default: true
+      use_zram:
+        description: "启用 ZRAM 增强算法"
+        required: true
+        type: boolean
+        default: true
+      zram_full_algo:
+        description: "启用 ZRAM 完整算法支持（LZ4K/LZ4KD/LZ4K_OPLUS，6.12 自动跳过）"
+        required: false
+        type: boolean
+        default: false
+      zram_extra_algos:
+        description: "额外 ZRAM 算法（逗号分隔，如 lzo,lz4,deflate,zstd,842）"
+        required: false
+        type: string
+        default: ""
+      use_bbg:
+        description: "启用 BBG 防格机"
+        required: true
+        type: boolean
+        default: true
+      use_ddk:
+        description: "启用 DDK 防格机 LSM"
+        required: true
+        type: boolean
+        default: false
+      use_ntsync:
+        description: "启用 NTsync"
+        required: true
+        type: boolean
+        default: true
+      use_networking:
+        description: "启用网络增强（IPSet + BBR）"
+        required: true
+        type: boolean
+        default: true
+      use_kpm:
+        description: "启用 KPM 功能（仅 SukiSU / ReSukiSU）"
+        required: true
+        type: boolean
+        default: false
+      kpm_password:
+        description: "自定义 KPM 超级密码（留空=默认）"
+        required: false
+        type: string
+        default: ""
+      use_rekernel:
+        description: "启用 Re-Kernel 驱动"
+        required: false
+        type: boolean
+        default: false
+
+      # ==================== 高级配置 ====================
+      version:
+        description: "自定义内核版本字符串（留空则自动生成）"
+        required: false
+        type: string
+        default: ""
+      build_time:
+        description: "构建时间（留空则用当前 UTC）"
+        required: false
+        type: string
+        default: ""
+      custom_kernel_options:
+        description: "自定义内核选项（每行一条 Kconfig/defconfig 片段）"
+        required: false
+        type: string
+        default: ""
+      publish_release:
+        description: "构建完成后发布到 Releases"
+        required: false
+        type: boolean
+        default: false
+
+  workflow_call:
+    inputs:
+      android_version:
+        required: true
+        type: string
+      kernel_version:
+        required: true
+        type: string
+      sub_level:
+        required: true
+        type: string
+      os_patch_level:
+        required: true
+        type: string
+      revision:
+        required: false
+        type: string
+        default: "r1"
+      ksu_variant:
+        required: true
+        type: string
+      ksu_branch:
+        required: true
+        type: string
+      custom_ref:
+        required: false
+        type: string
+        default: ""
+      ksu_version:
+        required: false
+        type: string
+        default: ""
+      use_susfs:
+        required: false
+        type: boolean
+        default: true
+      use_zram:
+        required: false
+        type: boolean
+        default: true
+      zram_full_algo:
+        required: false
+        type: boolean
+        default: false
+      zram_extra_algos:
+        required: false
+        type: string
+        default: ""
+      use_bbg:
+        required: false
+        type: boolean
+        default: true
+      use_ddk:
+        required: false
+        type: boolean
+        default: false
+      use_ntsync:
+        required: false
+        type: boolean
+        default: true
+      use_networking:
+        required: false
+        type: boolean
+        default: true
+      use_kpm:
+        required: false
+        type: boolean
+        default: false
+      kpm_password:
+        required: false
+        type: string
+        default: ""
+      use_rekernel:
+        required: false
+        type: boolean
+        default: false
+      version:
+        required: false
+        type: string
+        default: ""
+      build_time:
+        required: false
+        type: string
+        default: ""
+      custom_kernel_options:
+        required: false
+        type: string
+        default: ""
+      publish_release:
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.sub_level }}
+  cancel-in-progress: true
+
+jobs:
+  build-kernel:
+    name: "${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ inputs.sub_level }}-${{ inputs.ksu_variant }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+
+    env:
+      CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
+      CCACHE_NOHASHDIR: "true"
+      CCACHE_HARDLINK: "true"
+
+    steps:
+      # ============================================================
+      # 0. 构建信息摘要
+      # ============================================================
+      - name: 构建信息摘要
+        run: |
+          {
+            echo "## 内核构建配置"
+            echo "| 项 | 值 |"
+            echo "|---|---|"
+            echo "| Android | ${{ inputs.android_version }} |"
+            echo "| 内核 | ${{ inputs.kernel_version }}.${{ inputs.sub_level }} |"
+            echo "| 补丁级别 | ${{ inputs.os_patch_level }} |"
+            echo "| KSU 变体 | ${{ inputs.ksu_variant }} |"
+            echo "| KSU 分支 | ${{ inputs.ksu_branch }} |"
+            echo "| 自定义 ref | ${{ inputs.custom_ref }} |"
+            echo "| KSU 版本覆盖 | ${{ inputs.ksu_version }} |"
+            echo "| SUSFS | ${{ inputs.use_susfs }} |"
+            echo "| ZRAM 增强 | ${{ inputs.use_zram }} |"
+            echo "| ZRAM 完整算法 | ${{ inputs.zram_full_algo }} |"
+            echo "| BBG 防格机 | ${{ inputs.use_bbg }} |"
+            echo "| DDK 防格机 LSM | ${{ inputs.use_ddk }} |"
+            echo "| NTsync | ${{ inputs.use_ntsync }} |"
+            echo "| 网络增强 | ${{ inputs.use_networking }} |"
+            echo "| KPM | ${{ inputs.use_kpm }} |"
+            echo "| Re-Kernel | ${{ inputs.use_rekernel }} |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # ============================================================
+      # 1. 环境准备
+      # ============================================================
+      - name: 清理磁盘空间
+        uses: endersonmenezes/free-disk-space@v3
+        with:
+          remove_android: true
+          remove_dotnet: true
+          remove_haskell: true
+          remove_tool_cache: true
+          remove_swap: true
+
+      - name: 检出代码仓库
+        uses: actions/checkout@v4
+
+      - name: 安装编译依赖
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ccache python3 git curl wget build-essential libssl-dev \
+            bison flex libelf-dev dwarves zip unzip
+
+      - name: 配置 ccache
+        run: |
+          mkdir -p ~/.cache/bazel
+          ccache --version
+          ccache --max-size=2G
+          ccache --set-config=compression=true
+          echo "CCACHE_DIR=$HOME/.ccache" >> "$GITHUB_ENV"
+
+      - name: 恢复 ccache 缓存
+        uses: actions/cache@v4
+        with:
+          path: ~/.ccache
+          key: ${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.sub_level }}-${{ inputs.ksu_variant }}-ccache-${{ github.sha }}
+          restore-keys: |
+            ${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.sub_level }}-${{ inputs.ksu_variant }}-ccache-
+            ${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.sub_level }}-ccache-
+
+      - name: 缓存工具链
+        id: cache-toolchain
+        uses: actions/cache@v4
+        with:
+          path: |
+            kernel-build-tools
+            mkbootimg
+          key: toolchain-${{ runner.os }}-v1
+
+      - name: 下载工具链
+        if: steps.cache-toolchain.outputs.cache-hit != 'true'
+        run: |
+          BRANCH=main-kernel-build-2024
+          git clone https://android.googlesource.com/kernel/prebuilts/build-tools -b "$BRANCH" --depth 1 kernel-build-tools
+          git clone https://android.googlesource.com/platform/system/tools/mkbootimg -b "$BRANCH" --depth 1 mkbootimg
+
+      - name: 生成签名密钥
+        run: |
+          mkdir -p "$(dirname "$GITHUB_WORKSPACE/kernel-build-tools/linux-x86/share/avb/testkey_rsa2048.pem")"
+          openssl genpkey -algorithm RSA -pkeyopt rsa_keygen_bits:2048 \
+            > "$GITHUB_WORKSPACE/kernel-build-tools/linux-x86/share/avb/testkey_rsa2048.pem"
+
+      - name: 配置 Git
+        run: |
+          git config --global user.name "github-actions"
+          git config --global user.email "github-actions@github.com"
+
+      # ============================================================
+      # 2. 初始化路径 / 同步源码
+      # ============================================================
+      - name: 初始化构建环境
+        uses: ./.github/actions/setup-env
+        with:
+          android_version: ${{ inputs.android_version }}
+          kernel_version: ${{ inputs.kernel_version }}
+          sub_level: ${{ inputs.sub_level }}
+
+      - name: 克隆依赖仓库
+        run: |
+          set -euo pipefail
+
+          retry_clone() {
+            local url="$1" branch="$2" dir="$3" depth="${4:-1}"
+            local n=0
+            until [ "$n" -ge 5 ]; do
+              if git clone --depth "$depth" -b "$branch" "$url" "$dir" 2>/dev/null; then
+                return 0
+              fi
+              n=$((n+1)); echo "克隆 $url ($branch) 失败，重试 $n/5"; sleep 5; rm -rf "$dir"
+            done
+            return 1
+          }
+
+          echo "克隆 AnyKernel3..."
+          retry_clone https://github.com/osm0sis/AnyKernel3.git master AnyKernel3 || \
+            retry_clone https://github.com/WildKernels/AnyKernel3.git gki-2.0 AnyKernel3
+          rm -rf AnyKernel3/.git
+
+          if [ "${{ inputs.use_susfs }}" = "true" ]; then
+            SUSFS_BRANCH="gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}"
+            echo "克隆 SUSFS (分支: $SUSFS_BRANCH)..."
+            if [ "${{ inputs.ksu_variant }}" = "SukiSU" ]; then
+              retry_clone https://github.com/ShirkNeko/susfs4ksu.git "$SUSFS_BRANCH" susfs4ksu || \
+                retry_clone https://gitlab.com/simonpunk/susfs4ksu.git "$SUSFS_BRANCH" susfs4ksu
+            else
+              retry_clone https://gitlab.com/simonpunk/susfs4ksu.git "$SUSFS_BRANCH" susfs4ksu
+            fi
+            echo "SUSFS_LATEST_COMMIT_DATE=$(git -C susfs4ksu log -1 --date=format:'%Y-%m-%d %H:%M:%S' --format='%cd')" >> "$GITHUB_ENV"
+          fi
+
+          echo "克隆补丁资源..."
+          retry_clone https://github.com/WildKernels/kernel_patches.git main kernel_patches
+          retry_clone https://github.com/ShirkNeko/SukiSU_patch.git main SukiSU_patch
+          retry_clone https://github.com/Numbersf/Action-Build.git SukiSU-Ultra Action-Build || \
+            retry_clone https://github.com/Numbersf/Action-Build.git main Action-Build
+
+          if [ "${{ inputs.use_ddk }}" = "true" ] || [ "${{ inputs.use_zram }}" = "true" ]; then
+            echo "克隆 ABK 资源（DDK / ZRAM 增强）..."
+            git clone --depth 1 https://github.com/xingguangcuican6666/ABK.git ABK \
+              || git clone --depth 1 -b dev https://github.com/xingguangcuican6666/ABK.git ABK \
+              || echo "::warning::ABK 资源克隆失败，DDK/ZRAM 升级可能不可用"
+          fi
+
+      - name: 初始化并同步内核源码
+        run: |
+          set -euo pipefail
+          cd "$KERNEL_ROOT"
+
+          FORMATTED_BRANCH="${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.os_patch_level }}"
+          echo "初始化 repo，分支: common-${FORMATTED_BRANCH}"
+
+          "$REPO" init --depth=1 -u https://android.googlesource.com/kernel/manifest \
+            -b "common-${FORMATTED_BRANCH}" --repo-rev=v2.16
+
+          REMOTE_BRANCH="$(git ls-remote https://android.googlesource.com/kernel/common "${FORMATTED_BRANCH}")"
+          DEFAULT_MANIFEST_PATH=.repo/manifests/default.xml
+          if grep -q deprecated <<< "$REMOTE_BRANCH"; then
+            echo "检测到已弃用分支，修正 manifest..."
+            sed -i "s/\"${FORMATTED_BRANCH}\"/\"deprecated\/${FORMATTED_BRANCH}\"/g" "$DEFAULT_MANIFEST_PATH"
+          fi
+
+          "$REPO" --trace sync -c -j"$(nproc --all)" --no-tags --fail-fast
+
+      - name: 修复 glibc 2.38 兼容性
+        run: |
+          set -euo pipefail
+          cd "$KERNEL_ROOT/common"
+          RAW_SUB="${{ inputs.sub_level }}"
+          [[ ! "$RAW_SUB" =~ ^[0-9]+$ ]] && CURRENT_SUB=99999 || CURRENT_SUB=$RAW_SUB
+
+          NEEDS_FIX=false
+          if { [ "${{ inputs.android_version }}" = "android13" ] && [ "${{ inputs.kernel_version }}" = "5.10" ] && [ "$CURRENT_SUB" -le 186 ]; } || \
+             { [ "${{ inputs.android_version }}" = "android13" ] && [ "${{ inputs.kernel_version }}" = "5.15" ] && [ "$CURRENT_SUB" -le 119 ]; } || \
+             { [ "${{ inputs.android_version }}" = "android14" ] && [ "${{ inputs.kernel_version }}" = "6.1" ] && [ "$CURRENT_SUB" -le 43 ]; }; then
+            NEEDS_FIX=true
+          fi
+
+          if [ "$NEEDS_FIX" = true ]; then
+            GLIBC_VERSION=$(ldd --version 2>/dev/null | head -n 1 | awk '{print $NF}')
+            if [ "$(printf '%s\n' "2.38" "$GLIBC_VERSION" | sort -V | head -n1)" = "2.38" ]; then
+              echo "应用 glibc 2.38 兼容性修复..."
+              sed -i '/\$(Q)\$(MAKE) -C \$(SUBCMD_SRC) OUTPUT=\$(abspath \$(dir \$@))\/ \$(abspath \$@)/s//$(Q)$(MAKE) -C $(SUBCMD_SRC) EXTRA_CFLAGS="$(CFLAGS)" OUTPUT=$(abspath $(dir $@))\/ $(abspath $@)/' tools/bpf/resolve_btfids/Makefile 2>/dev/null || true
+              if [ "${{ inputs.kernel_version }}" = "5.10" ] || [ "${{ inputs.kernel_version }}" = "5.15" ]; then
+                sed -i '/char \*buf = NULL;/a int i;' tools/lib/subcmd/parse-options.c 2>/dev/null || true
+                sed -i 's/for (int i = 0; subcommands\[i\]; i++) {/for (i = 0; subcommands[i]; i++) {/' tools/lib/subcmd/parse-options.c 2>/dev/null || true
+                sed -i '/if (subcommands) {/a int i;' tools/lib/subcmd/parse-options.c 2>/dev/null || true
+                sed -i 's/for (int i = 0; subcommands\[i\]; i++)/for (i = 0; subcommands[i]; i++)/' tools/lib/subcmd/parse-options.c 2>/dev/null || true
+              fi
+            fi
+          fi
+
+      # ============================================================
+      # 3. 备份 defconfig（供 fragment 生成）
+      # ============================================================
+      - name: 备份原始 defconfig
+        run: cp "$DEFCONFIG" "$DEFCONFIG.orig"
+
+      # ============================================================
+      # 4. 基础内核配置
+      # ============================================================
+      - name: 配置基础内核选项
+        uses: ./.github/actions/set-kernel-config
+        with:
+          config_list: |
+            CONFIG_KSU=y
+            CONFIG_TMPFS_XATTR=y
+            CONFIG_TMPFS_POSIX_ACL=y
+
+      - name: 启用 KPM 基础配置
+        if: inputs.use_kpm && (inputs.ksu_variant == 'SukiSU' || inputs.ksu_variant == 'ReSukiSU' || inputs.ksu_variant == 'Next')
+        uses: ./.github/actions/set-kernel-config
+        with:
+          config_list: |
+            CONFIG_KPM=y
+
+      # ============================================================
+      # 5. Root 管理器
+      # ============================================================
+      - name: 添加 KernelSU 管理器
+        if: inputs.ksu_variant != 'None'
+        uses: ./.github/actions/root-setup
+        with:
+          variant: ${{ inputs.ksu_variant }}
+          branch: ${{ inputs.ksu_branch }}
+          custom_ref: ${{ inputs.custom_ref }}
+          ksu_version: ${{ inputs.ksu_version }}
+          susfs: ${{ inputs.use_susfs }}
+
+      # ============================================================
+      # 6. 功能补丁
+      # ============================================================
+      - name: 应用 SUSFS
+        if: inputs.use_susfs
+        uses: ./.github/actions/susfs
+        with:
+          android_version: ${{ inputs.android_version }}
+          kernel_version: ${{ inputs.kernel_version }}
+          sub_level: ${{ inputs.sub_level }}
+          os_patch_level: ${{ inputs.os_patch_level }}
+          variant: ${{ inputs.ksu_variant }}
+
+      - name: ZRAM 增强
+        if: inputs.use_zram
+        uses: ./.github/actions/zram
+        with:
+          kernel_version: ${{ inputs.kernel_version }}
+          android_version: ${{ inputs.android_version }}
+          full_algo: ${{ inputs.zram_full_algo }}
+          extra_algos: ${{ inputs.zram_extra_algos }}
+
+      - name: BBG 防格机
+        if: inputs.use_bbg
+        uses: ./.github/actions/bbg
+
+      - name: DDK 防格机 LSM
+        if: inputs.use_ddk
+        uses: ./.github/actions/ddk
+        with:
+          android_version: ${{ inputs.android_version }}
+          kernel_version: ${{ inputs.kernel_version }}
+
+      - name: NTsync
+        if: inputs.use_ntsync
+        uses: ./.github/actions/ntsync
+        with:
+          version: ${{ inputs.android_version }}-${{ inputs.kernel_version }}
+          kernel_version: ${{ inputs.kernel_version }}
+          sublevel: ${{ inputs.sub_level }}
+
+      - name: 网络增强（IPSet + BBR）
+        if: inputs.use_networking
+        uses: ./.github/actions/networking
+        with:
+          android_version: ${{ inputs.android_version }}
+          kernel_version: ${{ inputs.kernel_version }}
+
+      - name: Re-Kernel 驱动
+        if: inputs.use_rekernel
+        uses: ./.github/actions/rekernel
+        with:
+          kernel_version: ${{ inputs.kernel_version }}
+
+      - name: 应用自定义内核选项
+        if: inputs.custom_kernel_options != ''
+        uses: ./.github/actions/set-kernel-config
+        with:
+          config_list: ${{ inputs.custom_kernel_options }}
+
+      # ============================================================
+      # 7. 内核名称 / 构建时间
+      # ============================================================
+      - name: 配置内核选项
+        run: sed -i 's/check_defconfig//' "$KERNEL_ROOT/common/build.config.gki"
+
+      - name: 配置内核名称
+        run: |
+          set -euo pipefail
+          cd "$KERNEL_ROOT"
+
+          if [ -f "build/build.sh" ]; then
+            sed -i 's/-dirty//' ./common/scripts/setlocalversion 2>/dev/null || true
+          else
+            sed -i '/^[[:space:]]*"protected_exports_list"[[:space:]]*:[[:space:]]*"android\/abi_gki_protected_exports_aarch64",$/d' ./common/BUILD.bazel 2>/dev/null || true
+            sed -i '/kmi_symbol_list_strict_mode/d' ./common/BUILD.bazel 2>/dev/null || true
+            rm -rf ./common/android/abi_gki_protected_exports_* 2>/dev/null || true
+            sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" ./build/kernel/kleaf/impl/stamp.bzl 2>/dev/null || true
+          fi
+
+          VERSION_INPUT="$(echo "${{ inputs.version }}" | tr -d '[:space:]')"
+          if [ -n "$VERSION_INPUT" ] && [ ! -f "build/build.sh" ]; then
+            CLEAN_VERSION="$(echo "$VERSION_INPUT" | sed -E 's/^[0-9]+\.[0-9]+\.[0-9]+//')"
+            cd ./common
+            BID="ab$((RANDOM % 90000000 + 10000000))"
+            GHASH="$(git rev-parse --verify HEAD 2>/dev/null | cut -c1-13 || echo 0000000000000)"
+            case "${{ inputs.android_version }}-${{ inputs.kernel_version }}" in
+              "android14-6.1")  KMI_TAG="android14-11" ;;
+              "android15-6.6")  KMI_TAG="android15-8" ;;
+              "android16-6.12") KMI_TAG="android16-5" ;;
+              *) KMI_TAG="${{ inputs.android_version }}" ;;
+            esac
+            SUFFIX="-${KMI_TAG}-g${GHASH}-${BID}${CLEAN_VERSION}"
+            sed -i "\$s|echo \"\$res\"|echo \"${SUFFIX}\"|" ./scripts/setlocalversion 2>/dev/null || true
+            sed -i "/^CONFIG_LOCALVERSION=/ s/=\"[^\"]*\"/=\"${CLEAN_VERSION}\"/" ./arch/arm64/configs/gki_defconfig 2>/dev/null || true
+          fi
+
+      - name: 设置构建时间
+        shell: bash
+        run: |
+          INPUT_TIME="${{ inputs.build_time }}"
+          if [[ -n "$INPUT_TIME" && "$INPUT_TIME" != "N" && "$INPUT_TIME" != "n" ]]; then
+            DATESTR="$INPUT_TIME"
+          else
+            DATESTR="$(TZ='UTC' date +'%a %b %d %T %Z %Y')"
+          fi
+          echo "使用构建时间: $DATESTR"
+          echo "KBUILD_BUILD_TIMESTAMP=$DATESTR" >> "$GITHUB_ENV"
+          echo "KBUILD_BUILD_VERSION=1" >> "$GITHUB_ENV"
+
+      # ============================================================
+      # 8. 编译
+      # ============================================================
+      - name: 编译内核
+        uses: nick-fields/retry@v3
+        with:
+          timeout_minutes: 90
+          max_attempts: 2
+          retry_on: timeout
+          command: |
+            set -ex
+            cd "$KERNEL_ROOT"
+
+            if [ -f "build/build.sh" ]; then
+              echo "BUILD_METHOD=make" >> "$GITHUB_ENV"
+            else
+              echo "BUILD_METHOD=bazel" >> "$GITHUB_ENV"
+            fi
+
+            sed -i 's/BUILD_SYSTEM_DLKM=1/BUILD_SYSTEM_DLKM=0/' ./common/build.config.gki.aarch64 2>/dev/null || true
+            sed -i '/MODULES_ORDER=android\/gki_aarch64_modules/d' ./common/build.config.gki.aarch64 2>/dev/null || true
+            sed -i '/KMI_SYMBOL_LIST_STRICT_MODE/d' ./common/build.config.gki.aarch64 2>/dev/null || true
+
+            if [ -f "build/build.sh" ]; then
+              LTO=thin BUILD_CONFIG=common/build.config.gki.aarch64 build/build.sh CC="/usr/bin/ccache clang" || exit 1
+              strings "out/${{ inputs.android_version }}-${{ inputs.kernel_version }}/dist/Image" | grep 'Linux version' || true
+            else
+              FRAG="common/arch/arm64/configs/ksu.fragment"
+              diff "$DEFCONFIG.orig" "$DEFCONFIG" | grep '^>' | sed 's/^> //; s/^[[:space:]]*//' > "$FRAG" || true
+              cp "$DEFCONFIG.orig" "$DEFCONFIG"
+              echo "=== KSU Fragment ==="
+              cat "$FRAG" || true
+              FRAG_FLAG=""
+              [ -s "$FRAG" ] && FRAG_FLAG="--defconfig_fragment=//common:arch/arm64/configs/ksu.fragment"
+              LTO_FLAG="--lto=thin"
+              [ "${{ inputs.kernel_version }}" = "6.12" ] && LTO_FLAG="--lto=none"
+              tools/bazel build --disk_cache=/home/runner/.cache/bazel --config=fast $LTO_FLAG $FRAG_FLAG //common:kernel_aarch64_dist || exit 1
+              strings ./bazel-bin/common/kernel_aarch64/Image | grep 'Linux version' || true
+            fi
+
+      # ============================================================
+      # 9. KPM 镜像补丁（编译后）
+      # ============================================================
+      - name: 应用 KPM 补丁
+        if: inputs.use_kpm && (inputs.ksu_variant == 'SukiSU' || inputs.ksu_variant == 'ReSukiSU')
+        uses: ./.github/actions/kpm
+        with:
+          android_version: ${{ inputs.android_version }}
+          kernel_version: ${{ inputs.kernel_version }}
+          kpm_password: ${{ inputs.kpm_password }}
+
+      # ============================================================
+      # 10. 产物
+      # ============================================================
+      - name: 准备 Boot 镜像
+        run: |
+          set -euo pipefail
+          mkdir -p bootimgs
+          if [ "${BUILD_METHOD:-}" = "make" ] || { [ -z "${BUILD_METHOD:-}" ] && { [ "${{ inputs.android_version }}" = "android12" ] || [ "${{ inputs.android_version }}" = "android13" ]; }; }; then
+            SRC_DIR="$KERNEL_ROOT/out/${{ inputs.android_version }}-${{ inputs.kernel_version }}/dist"
+          else
+            SRC_DIR="$KERNEL_ROOT/bazel-bin/common/kernel_aarch64"
+          fi
+          cp "$SRC_DIR/Image" ./bootimgs/ 2>/dev/null || true
+          cp "$SRC_DIR/Image.lz4" ./bootimgs/ 2>/dev/null || true
+          cp "$SRC_DIR/Image" ./ 2>/dev/null || true
+          cp "$SRC_DIR/Image.lz4" ./ 2>/dev/null || true
+          gzip -n -k -f -9 ./Image > ./Image.gz 2>/dev/null || true
+
+      - name: 创建 AnyKernel3 压缩包
+        run: |
+          set -euo pipefail
+          cd "$ANYKERNEL3"
+          ZIP_NAME="${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ inputs.sub_level }}-${{ inputs.os_patch_level }}-${{ inputs.ksu_variant }}-AnyKernel3.zip"
+          mv ../Image ./Image
+          zip -r "../$ZIP_NAME" ./*
+
+      - name: 构建 Boot 镜像 (Android 12)
+        if: inputs.android_version == 'android12'
+        run: |
+          set -euo pipefail
+          cd bootimgs
+          GKI_URL="https://dl.google.com/android/gki/gki-certified-boot-android12-5.10-${{ inputs.os_patch_level }}_${{ inputs.revision }}.zip"
+          FALLBACK_URL="https://dl.google.com/android/gki/gki-certified-boot-android12-5.10-2023-01_r1.zip"
+          if [ "$(curl -sL -w '%{http_code}' "$GKI_URL" -o /dev/null)" = "200" ]; then
+            curl -Lo gki-kernel.zip "$GKI_URL"
+          else
+            curl -Lo gki-kernel.zip "$FALLBACK_URL"
+          fi
+          unzip -o gki-kernel.zip && rm gki-kernel.zip
+          "$UNPACK_BOOTIMG" --boot_img="$(pwd)/boot-5.10.img"
+          gzip -n -k -f -9 ./Image > ./Image.gz
+
+          "$MKBOOTIMG" --header_version 4 --kernel Image --output boot.img --ramdisk out/ramdisk \
+            --os_version 12.0.0 --os_patch_level "${{ inputs.os_patch_level }}"
+          "$AVBTOOL" add_hash_footer --partition_name boot --partition_size $((64 * 1024 * 1024)) \
+            --image boot.img --algorithm SHA256_RSA2048 --key "$BOOT_SIGN_KEY_PATH"
+          cp ./boot.img "../${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ inputs.sub_level }}-${{ inputs.os_patch_level }}-boot.img"
+
+          "$MKBOOTIMG" --header_version 4 --kernel Image.gz --output boot-gz.img --ramdisk out/ramdisk \
+            --os_version 12.0.0 --os_patch_level "${{ inputs.os_patch_level }}"
+          "$AVBTOOL" add_hash_footer --partition_name boot --partition_size $((64 * 1024 * 1024)) \
+            --image boot-gz.img --algorithm SHA256_RSA2048 --key "$BOOT_SIGN_KEY_PATH"
+          cp ./boot-gz.img "../${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ inputs.sub_level }}-${{ inputs.os_patch_level }}-boot-gz.img"
+
+          "$MKBOOTIMG" --header_version 4 --kernel Image.lz4 --output boot-lz4.img --ramdisk out/ramdisk \
+            --os_version 12.0.0 --os_patch_level "${{ inputs.os_patch_level }}"
+          "$AVBTOOL" add_hash_footer --partition_name boot --partition_size $((64 * 1024 * 1024)) \
+            --image boot-lz4.img --algorithm SHA256_RSA2048 --key "$BOOT_SIGN_KEY_PATH"
+          cp ./boot-lz4.img "../${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ inputs.sub_level }}-${{ inputs.os_patch_level }}-boot-lz4.img"
+
+      - name: 构建 Boot 镜像 (Android 13+)
+        if: inputs.android_version != 'android12'
+        run: |
+          set -euo pipefail
+          cd bootimgs
+          gzip -n -k -f -9 ./Image > ./Image.gz
+
+          "$MKBOOTIMG" --header_version 4 --kernel Image --output boot.img
+          "$AVBTOOL" add_hash_footer --partition_name boot --partition_size $((64 * 1024 * 1024)) \
+            --image boot.img --algorithm SHA256_RSA2048 --key "$BOOT_SIGN_KEY_PATH"
+          cp ./boot.img "../${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ inputs.sub_level }}-${{ inputs.os_patch_level }}-boot.img"
+
+          "$MKBOOTIMG" --header_version 4 --kernel Image.gz --output boot-gz.img
+          "$AVBTOOL" add_hash_footer --partition_name boot --partition_size $((64 * 1024 * 1024)) \
+            --image boot-gz.img --algorithm SHA256_RSA2048 --key "$BOOT_SIGN_KEY_PATH"
+          cp ./boot-gz.img "../${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ inputs.sub_level }}-${{ inputs.os_patch_level }}-boot-gz.img"
+
+          "$MKBOOTIMG" --header_version 4 --kernel Image.lz4 --output boot-lz4.img
+          "$AVBTOOL" add_hash_footer --partition_name boot --partition_size $((64 * 1024 * 1024)) \
+            --image boot-lz4.img --algorithm SHA256_RSA2048 --key "$BOOT_SIGN_KEY_PATH"
+          cp ./boot-lz4.img "../${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ inputs.sub_level }}-${{ inputs.os_patch_level }}-boot-lz4.img"
+
+      # ============================================================
+      # 11. 失败诊断 & 上传
+      # ============================================================
+      - name: 收集补丁冲突文件
+        if: always()
+        run: |
+          REJECTS_DIR="$GITHUB_WORKSPACE/patch-rejects"
+          mkdir -p "$REJECTS_DIR"
+          REJ_COUNT=0
+          while IFS= read -r REJ; do
+            [ -n "$REJ" ] || continue
+            REL="${REJ#"$KERNEL_ROOT"/}"
+            DEST="$REJECTS_DIR/$REL"
+            mkdir -p "$(dirname "$DEST")"
+            cp "$REJ" "$DEST"
+            ORIG="${REJ%.rej}"
+            [ -f "$ORIG" ] && cp "$ORIG" "${DEST%.rej}"
+            echo "$REL" >> "$REJECTS_DIR/index.txt"
+            REJ_COUNT=$((REJ_COUNT+1))
+          done < <(find "$KERNEL_ROOT" -type f -name '*.rej' 2>/dev/null || true)
+          echo "发现 $REJ_COUNT 个 .rej 文件"
+
+      - name: 上传构建产物
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ inputs.ksu_variant }}_kernel-${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ inputs.sub_level }}
+          path: |
+            *AnyKernel3.zip
+            *.img
+            patch-rejects/**
+          retention-days: 7
+          if-no-files-found: warn
+
+  # ============================================================
+  # 可选：构建完成后发布到 Releases
+  # ============================================================
+  publish-release:
+    name: "发布 Release"
+    needs: build-kernel
+    if: inputs.publish_release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: 下载构建产物
+        uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.ksu_variant }}_kernel-${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ inputs.sub_level }}
+          path: artifacts
+
+      - name: 发布到 Releases
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ inputs.sub_level }}-${{ inputs.os_patch_level }}-${{ inputs.ksu_variant }}-r${{ github.run_number }}
+          name: "[${{ inputs.ksu_variant }}] ${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ inputs.sub_level }} build ${{ github.run_number }}"
+          files: artifacts/**/*
+          fail_on_unmatched_files: false
+          generate_release_notes: false

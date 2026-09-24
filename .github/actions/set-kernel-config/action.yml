@@ -1,0 +1,52 @@
+name: Set Kernel Config
+description: 幂等地向 gki_defconfig 追加或覆盖配置项（存在则替换，不存在则追加）
+
+inputs:
+  config_list:
+    description: 每行一条 Kconfig/defconfig 片段，例如 CONFIG_FOO=y
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Patch gki_defconfig
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        : "${KERNEL_ROOT:?KERNEL_ROOT 未设置，请先运行 setup-env}"
+        cd "$KERNEL_ROOT/common"
+
+        DEFCONFIG="arch/arm64/configs/gki_defconfig"
+        if [ ! -f "$DEFCONFIG" ]; then
+          echo "::error::未找到 gki_defconfig: $(pwd)/$DEFCONFIG"
+          exit 1
+        fi
+
+        apply_line() {
+          local line="$1"
+          line="$(echo "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
+          [[ -z "$line" || "$line" == \#* ]] && return
+
+          local key value
+          if [[ "$line" == *"="* ]]; then
+            key="${line%%=*}"
+            value="${line#*=}"
+          else
+            key="$line"
+            value="y"
+          fi
+
+          if grep -q "^${key}=" "$DEFCONFIG"; then
+            sed -i "s|^${key}=.*|${key}=${value}|g" "$DEFCONFIG"
+          elif grep -q "^# ${key} is not set" "$DEFCONFIG"; then
+            sed -i "s|^# ${key} is not set|${key}=${value}|g" "$DEFCONFIG"
+          else
+            echo "${key}=${value}" >> "$DEFCONFIG"
+          fi
+          echo "  ${key}=${value}"
+        }
+
+        while IFS= read -r line || [ -n "$line" ]; do
+          apply_line "$line"
+        done <<< "${{ inputs.config_list }}"

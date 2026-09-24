@@ -1,0 +1,41 @@
+name: Apply Baseband Guard (BBG)
+description: 下载并集成 Baseband-guard LSM，阻止对关键分区/设备节点的非法写入
+
+runs:
+  using: composite
+  steps:
+    - name: Install Baseband Guard
+      shell: bash
+      run: |
+        set -o pipefail
+        cd "$KERNEL_ROOT"
+        ok=false
+        for i in 1 2 3 4 5; do
+          if curl -fsSL --retry 3 --retry-delay 5 --connect-timeout 30 \
+            https://raw.githubusercontent.com/vc-teahouse/Baseband-guard/main/setup.sh | bash; then
+            ok=true
+            break
+          fi
+          echo "BBG setup 第 $i 次失败，重试..."
+          sleep 5
+        done
+        [ "$ok" = true ] || { echo "::error::Baseband-guard 下载失败"; exit 1; }
+
+    - name: Configure Baseband Guard
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "$KERNEL_ROOT"
+        sed -i '/^config LSM$/,/^help$/{ /^[[:space:]]*default/ { /baseband_guard/! s/selinux/selinux,baseband_guard/ } }' common/security/Kconfig
+        grep -q 'baseband_guard' common/security/Kconfig || { echo "::error::BBG 未写入 security/Kconfig"; exit 1; }
+        BBG_DIR=""
+        for d in "$KERNEL_ROOT/Baseband-guard" "$KERNEL_ROOT/common/Baseband-guard"; do
+          [ -d "$d/.git" ] && BBG_DIR="$d" && break
+        done
+        [ -n "$BBG_DIR" ] && echo "BBG_COMMIT=$(git -C "$BBG_DIR" rev-parse --short HEAD)" >> "$GITHUB_ENV" || true
+
+    - name: Enable BBG config
+      uses: ./.github/actions/set-kernel-config
+      with:
+        config_list: |
+          CONFIG_BBG=y

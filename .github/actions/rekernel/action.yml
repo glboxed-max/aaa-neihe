@@ -1,0 +1,88 @@
+name: Apply Re-Kernel Driver
+description: 集成 Re:Kernel GKI Vendor Hooks 驱动
+
+inputs:
+  kernel_version:
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Integrate Re-Kernel
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "$KERNEL_ROOT"
+        echo "Integrating Re-Kernel..."
+        TMP_REKERNEL=/tmp/rekernel
+        rm -rf "$TMP_REKERNEL"
+        git clone --depth 1 https://github.com/Sakion-Team/Re-Kernel.git "$TMP_REKERNEL"
+
+        REKERNEL_SRC="$TMP_REKERNEL/LKM-Source"
+        [ -d "$REKERNEL_SRC" ] || { echo "::error::Re-Kernel 上游缺少 LKM-Source 目录"; exit 1; }
+
+        rm -rf common/drivers/rekernel
+        mkdir -p common/drivers/rekernel
+        # 兼容新旧两种源码布局
+        cp "$REKERNEL_SRC"/*.c common/drivers/rekernel/ 2>/dev/null || true
+        cp "$REKERNEL_SRC"/*.h common/drivers/rekernel/ 2>/dev/null || true
+
+        # Kconfig
+        if [ -f "$REKERNEL_SRC/Kconfig" ]; then
+          cp "$REKERNEL_SRC/Kconfig" common/drivers/rekernel/Kconfig
+          sed -i '/depends on MODULES/d' common/drivers/rekernel/Kconfig
+          sed -i '0,/bool "Re:Kernel module"/s//bool "Re:Kernel support (GKI Vendor Hooks)"/' common/drivers/rekernel/Kconfig
+          sed -i '0,/default n/s//\tdefault y/' common/drivers/rekernel/Kconfig
+        else
+          cat > common/drivers/rekernel/Kconfig <<'EOF'
+        menu "Re:Kernel"
+        config REKERNEL
+            bool "Re:Kernel support (GKI Vendor Hooks)"
+            default y
+        config REKERNEL_NETWORK
+            bool "Re:Kernel NetReceive unfreeze support"
+            depends on REKERNEL
+            default y
+        endmenu
+        EOF
+        fi
+
+        # Makefile
+        if [ -f "$REKERNEL_SRC/Makefile" ]; then
+          cp "$REKERNEL_SRC/Makefile" common/drivers/rekernel/Makefile
+          sed -i 's/^obj-m[[:space:]]*:=/obj-$(CONFIG_REKERNEL) +=/' common/drivers/rekernel/Makefile
+        else
+          cat > common/drivers/rekernel/Makefile <<'EOF'
+        obj-$(CONFIG_REKERNEL) += rekernel.o
+        ccflags-$(CONFIG_REKERNEL_NETWORK) += -DNETWORK_FILTER
+        EOF
+        fi
+
+        # 挂载到驱动树
+        if ! grep -qF 'source "drivers/rekernel/Kconfig"' common/drivers/Kconfig; then
+          sed -i '/^endmenu$/i source "drivers/rekernel/Kconfig"' common/drivers/Kconfig
+        fi
+        if ! grep -qF 'obj-$(CONFIG_REKERNEL) += rekernel/' common/drivers/Makefile; then
+          echo 'obj-$(CONFIG_REKERNEL) += rekernel/' >> common/drivers/Makefile
+        fi
+
+        # 头文件路径修复
+        for c in common/drivers/rekernel/*.c; do
+          [ -f "$c" ] || continue
+          sed -i 's|#include <../android/binder_internal.h>|#include "../../drivers/android/binder_internal.h"|g' "$c"
+          grep -qF '#include <linux/seq_file.h>' "$c" || sed -i '/#include <trace\/hooks\/binder.h>/a #include <linux/seq_file.h>' "$c"
+        done
+
+        # 内核版本宏
+        mk="common/drivers/rekernel/rekernel.h"
+        if [ -f "$mk" ]; then
+          VERSION_MACRO="KERNEL_$(echo "${{ inputs.kernel_version }}" | tr '.' '_')"
+          sed -i "s|^// #define ${VERSION_MACRO}$|#define ${VERSION_MACRO}|" "$mk" || true
+        fi
+
+    - name: Enable Re-Kernel configs
+      uses: ./.github/actions/set-kernel-config
+      with:
+        config_list: |
+          CONFIG_REKERNEL=y
+          CONFIG_REKERNEL_NETWORK=y

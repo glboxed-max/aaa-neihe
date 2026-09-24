@@ -1,0 +1,38 @@
+name: Apply Xingguang DDK LSM
+description: 应用 xingguang-ddk 防格机 LSM 补丁栈并启用内建 LSM
+
+inputs:
+  android_version:
+    required: true
+  kernel_version:
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: Apply DDK LSM
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "$KERNEL_ROOT"
+
+        SETUP=""
+        for cand in "$ABK_ASSETS/ddk/setup.sh" "$GITHUB_WORKSPACE/ABK/ddk/setup.sh"; do
+          [ -f "$cand" ] && SETUP="$cand" && break
+        done
+
+        if [ -z "$SETUP" ]; then
+          echo "::error::未找到 DDK setup.sh（$ABK_ASSETS/ddk/setup.sh）"
+          exit 1
+        fi
+
+        echo "应用 Xingguang DDK patch 栈并启用内建 LSM..."
+        bash "$SETUP"
+
+        test -f common/include/linux/xingguang_ddk.h || { echo "::error::DDK 头文件缺失"; exit 1; }
+
+    - name: Enable DDK config
+      uses: ./.github/actions/set-kernel-config
+      with:
+        config_list: |
+          CONFIG_XINGGUANG_DDK=y

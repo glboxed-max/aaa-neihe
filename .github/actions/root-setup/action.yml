@@ -1,0 +1,155 @@
+name: Add Root Manager (KernelSU variants)
+description: 按变体/分支/自定义 ref 安装 KernelSU，并可选强制指定 KSU_VERSION
+
+inputs:
+  variant:
+    description: "Official / SukiSU / ReSukiSU / Next / None"
+    required: true
+  branch:
+    description: "Stable(标准) / Dev(开发) / Latest(最新) / Other(其他/指定) / Custom(自定义)"
+    required: true
+  custom_ref:
+    description: 当 branch 为“自定义”时使用的分支或 tag
+    required: false
+    default: ""
+  ksu_version:
+    description: 强制写入的 KSU_VERSION（留空=源码默认；例如 13000）
+    required: false
+    default: ""
+  susfs:
+    description: 是否启用 SUSFS（影响 SukiSU 分支选择）
+    required: false
+    default: "false"
+
+runs:
+  using: composite
+  steps:
+    - name: Resolve root ref
+      id: resolve
+      shell: bash
+      run: |
+        set -euo pipefail
+        variant="${{ inputs.variant }}"
+        branch="${{ inputs.branch }}"
+        custom="${{ inputs.custom_ref }}"
+        susfs="${{ inputs.susfs }}"
+
+        REF=""
+        case "$branch" in
+          "Stable(标准)")
+            case "$variant" in
+              Official) REF="main" ;;
+              SukiSU)   REF="builtin" ;;
+              ReSukiSU) REF="main" ;;
+              Next)     REF="dev" ;;
+            esac
+            ;;
+          "Dev(开发)"|"Latest(最新)")
+            case "$variant" in
+              Official) REF="main" ;;
+              SukiSU)   REF="main" ;;
+              ReSukiSU) REF="main" ;;
+              Next)     REF="dev" ;;
+            esac
+            ;;
+          "Other(其他/指定)"|"Custom(自定义)")
+            REF="$custom"
+            ;;
+          *)
+            REF="$branch"
+            ;;
+        esac
+
+        # SukiSU 在不使用 SUSFS 时强制走 main（builtin 自带 SUSFS）
+        if [ "$variant" = "SukiSU" ] && [ "$susfs" != "true" ] && [ "$REF" = "builtin" ]; then
+          REF="main"
+        fi
+
+        if [ -z "$REF" ]; then
+          echo "::error::未能解析 root ref（variant=$variant branch=$branch）"
+          exit 1
+        fi
+
+        {
+          echo "ROOT_REF=$REF"
+          echo "ROOT_VARIANT=$variant"
+        } >> "$GITHUB_ENV"
+        echo "ROOT_REF=$REF"
+
+    - name: Install KernelSU
+      if: inputs.variant != 'None'
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "$KERNEL_ROOT"
+        variant="${{ inputs.variant }}"
+        ref="$ROOT_REF"
+
+        case "$variant" in
+          "Official")
+            echo "添加 KernelSU 官方版 (ref=$ref)..."
+            curl -fLSs "https://raw.githubusercontent.com/tiann/KernelSU/main/kernel/setup.sh" | bash -s "$ref"
+            ;;
+          "SukiSU")
+            echo "添加 SukiSU-Ultra (ref=$ref)..."
+            setup_script="$(mktemp)"
+            curl -fLSs "https://raw.githubusercontent.com/SukiSU-Ultra/SukiSU-Ultra/main/kernel/setup.sh" -o "$setup_script"
+            bash "$setup_script" "$ref"
+            rm -f "$setup_script"
+            ;;
+          "ReSukiSU")
+            echo "添加 ReSukiSU (ref=$ref)..."
+            curl -fLSs "https://raw.githubusercontent.com/ReSukiSU/ReSukiSU/main/kernel/setup.sh" | bash -s "$ref"
+            ;;
+          "Next")
+            echo "添加 KernelSU-Next (ref=$ref)..."
+            if [ "${{ inputs.susfs }}" = "true" ]; then
+              curl -fLSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/dev/kernel/setup.sh" | bash -s dev_susfs
+            else
+              curl -fLSs "https://raw.githubusercontent.com/KernelSU-Next/KernelSU-Next/dev/kernel/setup.sh" | bash
+            fi
+            ;;
+        esac
+
+        if [ ! -d KernelSU ]; then
+          echo "::error::KernelSU 源码目录不存在，安装失败"
+          exit 1
+        fi
+
+        KSU_LATEST_COMMIT_DATE="$(git -C KernelSU log -1 --date=format:'%Y-%m-%d %H:%M:%S %z' --format='%cd' 2>/dev/null || echo '未知')"
+        echo "KSU_LATEST_COMMIT_DATE=$KSU_LATEST_COMMIT_DATE" >> "$GITHUB_ENV"
+        echo "KSU 最新提交: $KSU_LATEST_COMMIT_DATE"
+
+    - name: Override KSU_VERSION
+      if: inputs.variant != 'None' && inputs.ksu_version != ''
+      shell: bash
+      run: |
+        set -euo pipefail
+        cd "$KERNEL_ROOT"
+        ver="${{ inputs.ksu_version }}"
+        if ! [[ "$ver" =~ ^[0-9]+$ ]]; then
+          echo "::error::ksu_version 必须是纯数字，当前: $ver"
+          exit 1
+        fi
+
+        patched=false
+        for kb in KernelSU/kernel/Kbuild KernelSU/kernel/Makefile; do
+          [ -f "$kb" ] || continue
+          if grep -qE '^[[:space:]]*KSU_VERSION[[:space:]]*:=' "$kb"; then
+            sed -i -E "s|^[[:space:]]*KSU_VERSION[[:space:]]*:=.*|KSU_VERSION := ${ver}|" "$kb"
+            patched=true
+            echo "已写入 $kb: KSU_VERSION := ${ver}"
+          fi
+        done
+
+        if [ "$patched" != true ]; then
+          echo "::warning::未在 ${{ inputs.variant }} 的 Kbuild 中找到 KSU_VERSION，改用 ccflags 注入"
+          for mk in KernelSU/kernel/Kbuild KernelSU/kernel/Makefile; do
+            [ -f "$mk" ] || continue
+            grep -q '^-DKSU_VERSION' "$mk" || echo "ccflags-y += -DKSU_VERSION=${ver}" >> "$mk"
+            patched=true
+          done
+        fi
+
+        [ "$patched" = true ] || { echo "::error::KSU_VERSION 覆盖失败"; exit 1; }
+        echo "KSU_VERSION_OVERRIDE=$ver" >> "$GITHUB_ENV"
