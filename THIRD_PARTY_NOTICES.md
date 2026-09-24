@@ -22,5 +22,11 @@
 - https://github.com/jiuxiao226/KernelSU-Actions
 - https://github.com/WildKernels/GKI_KernelSU_SUSFS
 - https://sukisu.org/zh/guide/links
+- https://github.com/xiaoleGun/KernelSU_Action （非 GKI 4.x/5.4 构建思路）
+- https://github.com/dabao1955/kernel_build_action （非 GKI 构建思路）
 
 `ntsync/patches/` 下的两个 lockdep 前置补丁取自 WildKernels/kernel_patches（GPL-3.0-or-later）。
+
+`.github/nongki/legacy_ksu_hooks.sh`（非 GKI 手动 hook）源自 KernelSU 官方手动 hook 补丁（作者 weishu <twosxtd@gmail.com>，GPL-3.0），整理为脚本以便在 4.x/5.4 老内核上注入 syscall hook。
+
+非 GKI 构建使用的 SUSFS 非 GKI 分支（`kernel-4.9/4.14/4.19/5.4`）来自 simonpunk/susfs4ksu。
