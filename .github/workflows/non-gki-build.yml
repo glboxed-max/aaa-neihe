@@ -1,0 +1,424 @@
+name: 非 GKI 内核构建（4.x / 5.4）
+
+# ============================================================
+#  非 GKI（设备内核）构建：4.4 / 4.9 / 4.14 / 4.19 / 5.4
+#  - 源码来自设备内核仓库（自己填）
+#  - 老内核用旧版 AOSP Clang + GCC 4.9 binutils
+#  - KernelSU 用 ReSukiSU / SukiSU-builtin / KernelSU v0.9.5 / KSU-Next legacy
+#  - 老内核 kprobes 不可靠 → 默认改用“手动 hook”
+#  详见 README「4 系列（非 GKI）特别说明」
+# ============================================================
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      kernel_series:
+        description: "内核系列（决定默认工具链与 KSU ref）"
+        required: true
+        type: choice
+        options: ["4.4", "4.9", "4.14", "4.19", "5.4"]
+        default: "4.19"
+      kernel_source:
+        description: "设备内核源码仓库 URL"
+        required: true
+        type: string
+        default: "https://github.com/xiaoleGun/android_kernel_xiaomi_wayne-4.19"
+      kernel_source_branch:
+        description: "源码分支"
+        required: true
+        type: string
+        default: "twrp-12"
+      defconfig:
+        description: "defconfig 路径（arch/<arch>/configs/ 下，含子目录）"
+        required: true
+        type: string
+        default: "vendor/wayne_defconfig"
+      image_name:
+        description: "产物镜像名（如 Image.gz-dtb / Image.gz / Image）"
+        required: true
+        type: string
+        default: "Image.gz-dtb"
+      arch:
+        description: "架构"
+        required: true
+        type: choice
+        options: [arm64, arm]
+        default: arm64
+      ksu_variant:
+        description: "KSU 变体"
+        required: true
+        type: choice
+        options: [resukisu, sukisu-ultra, kernelsu, kernelsu-next, none]
+        default: resukisu
+      ksu_ref:
+        description: "KSU 分支/Tag（留空=按内核版本自动选）"
+        required: false
+        type: string
+        default: ""
+      hook_mode:
+        description: "hook 方式（老内核推荐 auto→manual）"
+        required: true
+        type: choice
+        options: [auto, manual, kprobes, none]
+        default: auto
+      use_susfs:
+        description: "启用 SUSFS（非 GKI 分支较陈旧，实验性）"
+        required: false
+        type: boolean
+        default: false
+      use_llvm:
+        description: "全程 LLVM（LLVM=1 LLVM_IAS=1，通常只适合 5.x）"
+        required: false
+        type: boolean
+        default: false
+      clang_branch:
+        description: "AOSP Clang 分支（留空=按系列自动）"
+        required: false
+        type: string
+        default: ""
+      clang_version:
+        description: "AOSP Clang 版本（留空=按系列自动）"
+        required: false
+        type: string
+        default: ""
+      extra_defconfig:
+        description: "额外 defconfig 片段（空格或换行分隔）"
+        required: false
+        type: string
+        default: ""
+      extra_make_args:
+        description: "额外 make 参数（如 LD=ld.lld KCFLAGS=-Wno-error）"
+        required: false
+        type: string
+        default: ""
+      disable_lto:
+        description: "关闭 LTO"
+        required: false
+        type: boolean
+        default: false
+      disable_cc_werror:
+        description: "关闭 CONFIG_CC_WERROR"
+        required: false
+        type: boolean
+        default: true
+      need_dtbo:
+        description: "打包 dtbo.img"
+        required: false
+        type: boolean
+        default: false
+      publish_release:
+        description: "构建完成后发布到 Releases"
+        required: false
+        type: boolean
+        default: false
+
+concurrency:
+  group: non-gki-${{ github.ref }}-${{ inputs.kernel_source }}-${{ inputs.kernel_source_branch }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: "${{ inputs.kernel_series }}-${{ inputs.ksu_variant }}"
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    outputs:
+      tag: ${{ steps.meta.outputs.tag }}
+    env:
+      WORKSPACE: ${{ github.workspace }}/kernel_workspace
+      KERNEL_DIR: ${{ github.workspace }}/kernel_workspace/android-kernel
+      OUT: ${{ github.workspace }}/kernel_workspace/android-kernel/out
+      CLANG_DIR: ${{ github.workspace }}/kernel_workspace/clang
+      GCC64_DIR: ${{ github.workspace }}/kernel_workspace/gcc-64
+      GCC32_DIR: ${{ github.workspace }}/kernel_workspace/gcc-32
+      ANYKERNEL3: ${{ github.workspace }}/kernel_workspace/AnyKernel3
+      SUSFS4KSU: ${{ github.workspace }}/kernel_workspace/susfs4ksu
+      CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
+      CCACHE_NOHASHDIR: "true"
+      CCACHE_HARDLINK: "true"
+
+    steps:
+      - name: 检出代码仓库
+        uses: actions/checkout@v4
+
+      - name: 清理磁盘空间
+        uses: endersonmenezes/free-disk-space@v3
+        with:
+          remove_android: false
+          remove_dotnet: true
+          remove_haskell: true
+          remove_tool_cache: true
+          remove_swap: false
+
+      - name: 增加交换空间
+        run: |
+          sudo fallocate -l 8G /mnt/swapfile || sudo dd if=/dev/zero of=/mnt/swapfile bs=1M count=8192
+          sudo chmod 600 /mnt/swapfile
+          sudo mkswap /mnt/swapfile
+          sudo swapon /mnt/swapfile
+          free -h
+
+      - name: 安装编译依赖
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y --no-install-recommends \
+            bc bison build-essential ccache cpio curl device-tree-compiler flex \
+            git libelf-dev libssl-dev lz4 make python3 rsync unzip zip zstd libncurses-dev
+          mkdir -p "$WORKSPACE"
+
+      - name: 准备工具链（Clang + GCC 4.9）
+        run: |
+          set -euo pipefail
+          SERIES="${{ inputs.kernel_series }}"
+          CB="${{ inputs.clang_branch }}"
+          CV="${{ inputs.clang_version }}"
+          if [ -z "$CB" ] || [ -z "$CV" ]; then
+            case "$SERIES" in
+              4.4|4.9|4.14|4.19) CB=master-kernel-build-2022; CV=r450784e ;;
+              5.4)                CB=main-kernel-build-2024;  CV=r510928 ;;
+            esac
+          fi
+          echo "Clang: $CB / $CV"
+          mkdir -p "$CLANG_DIR"
+          curl -fSL "https://android.googlesource.com/platform/prebuilts/clang/host/linux-x86/+archive/refs/heads/${CB}/clang-${CV}.tar.gz" \
+            -o "$WORKSPACE/clang.tar.gz"
+          tar -xzf "$WORKSPACE/clang.tar.gz" -C "$CLANG_DIR"
+          [ -x "$CLANG_DIR/bin/clang" ] || { echo "::error::clang 未就绪（分支/版本可能是不含工具链的占位目录）"; exit 1; }
+          "$CLANG_DIR/bin/clang" --version | head -n1
+
+          if [ "${{ inputs.use_llvm }}" != "true" ]; then
+            GCC_TAG=android-12.1.0_r27
+            mkdir -p "$GCC64_DIR" "$GCC32_DIR"
+            curl -fSL "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/aarch64/aarch64-linux-android-4.9/+archive/refs/tags/${GCC_TAG}.tar.gz" \
+              -o "$WORKSPACE/gcc64.tar.gz"
+            tar -xzf "$WORKSPACE/gcc64.tar.gz" -C "$GCC64_DIR"
+            curl -fSL "https://android.googlesource.com/platform/prebuilts/gcc/linux-x86/arm/arm-linux-androideabi-4.9/+archive/refs/tags/${GCC_TAG}.tar.gz" \
+              -o "$WORKSPACE/gcc32.tar.gz"
+            tar -xzf "$WORKSPACE/gcc32.tar.gz" -C "$GCC32_DIR"
+          fi
+
+      - name: 拉取内核源码与 AnyKernel3
+        run: |
+          set -euo pipefail
+          git clone --depth 1 -b "${{ inputs.kernel_source_branch }}" "${{ inputs.kernel_source }}" "$KERNEL_DIR"
+          git clone --depth 1 https://github.com/osm0sis/AnyKernel3.git "$ANYKERNEL3"
+          rm -rf "$ANYKERNEL3/.git"
+
+      - name: 安装 KernelSU
+        if: inputs.ksu_variant != 'none'
+        run: |
+          set -euo pipefail
+          cd "$KERNEL_DIR"
+
+          case "${{ inputs.ksu_variant }}" in
+            resukisu)      REPO="https://github.com/ReSukiSU/ReSukiSU"; SETUP_REF="main"; DIR="KernelSU"; MODERN="main"; LEGACY="main" ;;
+            sukisu-ultra)  REPO="https://github.com/SukiSU-Ultra/SukiSU-Ultra"; SETUP_REF="main"; DIR="KernelSU"; MODERN="main"; LEGACY="builtin" ;;
+            kernelsu)      REPO="https://github.com/tiann/KernelSU"; SETUP_REF="main"; DIR="KernelSU"; MODERN="main"; LEGACY="v0.9.5" ;;
+            kernelsu-next) REPO="https://github.com/KernelSU-Next/KernelSU-Next"; SETUP_REF="dev"; DIR="KernelSU-Next"; MODERN="dev"; LEGACY="legacy" ;;
+            *) echo "::error::未知变体"; exit 1 ;;
+          esac
+
+          KVER="$(sed -nE 's/^VERSION = ([0-9]+).*/\1/p' Makefile | head -n1).$(sed -nE 's/^PATCHLEVEL = ([0-9]+).*/\1/p' Makefile | head -n1)"
+          echo "内核版本: $KVER"
+
+          REF="${{ inputs.ksu_ref }}"
+          if [ -z "$REF" ]; then
+            if awk -v a="$KVER" 'BEGIN{split(a,x,".");exit !(x[1]>5 || (x[1]==5 && x[2]>=10))}'; then REF="$MODERN"; else REF="$LEGACY"; fi
+          fi
+          echo "KSU ref: $REF"
+
+          if ! git ls-remote --heads --tags "$REPO" 2>/dev/null | grep -qE "refs/(heads|tags)/${REF}$"; then
+            echo "::error::KSU ref '$REF' 在 $REPO 中不存在"; exit 1
+          fi
+
+          curl -fLSs "https://raw.githubusercontent.com/${REPO#https://github.com/}/${SETUP_REF}/kernel/setup.sh" | bash -s "$REF"
+
+          [ -d "$DIR" ] || { echo "::error::$DIR 未生成"; exit 1; }
+          [ -e drivers/kernelsu ] || { echo "::error::drivers/kernelsu 软链未创建"; exit 1; }
+          grep -qE '^[[:space:]]*obj-\$\(CONFIG_KSU\)[[:space:]]*\+=[[:space:]]*kernelsu/?' drivers/Makefile \
+            || printf '\nobj-$(CONFIG_KSU) += kernelsu/\n' >> drivers/Makefile
+          grep -q 'drivers/kernelsu/Kconfig' drivers/Kconfig \
+            || sed -i '/endmenu/i\source "drivers/kernelsu/Kconfig"' drivers/Kconfig
+          echo "KSU_HEAD=$(git -C "$DIR" rev-parse --short HEAD)" >> "$GITHUB_ENV"
+
+      - name: 解析 hook 方式
+        id: hook
+        run: |
+          set -euo pipefail
+          KVER="$(sed -nE 's/^VERSION = ([0-9]+).*/\1/p' "$KERNEL_DIR/Makefile" | head -n1).$(sed -nE 's/^PATCHLEVEL = ([0-9]+).*/\1/p' "$KERNEL_DIR/Makefile" | head -n1)"
+          MODE="${{ inputs.hook_mode }}"
+          if [ "$MODE" = "auto" ]; then
+            if awk -v a="$KVER" 'BEGIN{split(a,x,".");exit !(x[1]>5 || (x[1]==5 && x[2]>=10))}'; then MODE=kprobes; else MODE=manual; fi
+          fi
+          echo "mode=$MODE" >> "$GITHUB_OUTPUT"
+          echo "hook mode: $MODE (kernel $KVER)"
+
+      - name: 应用手动 hook（老内核）
+        if: inputs.ksu_variant != 'none' && steps.hook.outputs.mode == 'manual'
+        run: |
+          set -euo pipefail
+          cd "$KERNEL_DIR"
+          bash "$GITHUB_WORKSPACE/.github/nongki/legacy_ksu_hooks.sh"
+
+      - name: 应用 SUSFS（实验性）
+        if: inputs.use_susfs
+        run: |
+          set -euo pipefail
+          SERIES="${{ inputs.kernel_series }}"
+          case "$SERIES" in
+            4.9) BR=kernel-4.9 ;; 4.14) BR=kernel-4.14 ;; 4.19) BR=kernel-4.19 ;; 5.4) BR=kernel-5.4 ;;
+            4.4) echo "::error::SUSFS 无 4.4 非 GKI 分支"; exit 1 ;;
+            *) echo "::error::未知系列"; exit 1 ;;
+          esac
+          git clone --depth 1 -b "$BR" https://gitlab.com/simonpunk/susfs4ksu.git "$SUSFS4KSU"
+          cd "$KERNEL_DIR"
+          cp "$SUSFS4KSU"/kernel_patches/fs/* fs/ 2>/dev/null || true
+          cp "$SUSFS4KSU"/kernel_patches/include/linux/* include/linux/ 2>/dev/null || true
+          PATCH_FILE="$(ls "$SUSFS4KSU"/kernel_patches/50_*_in_kernel-${SERIES}.patch 2>/dev/null | head -n1 || true)"
+          [ -n "$PATCH_FILE" ] || PATCH_FILE="$(ls "$SUSFS4KSU"/kernel_patches/50_*.patch 2>/dev/null | head -n1 || true)"
+          [ -n "$PATCH_FILE" ] || { echo "::error::未找到 SUSFS 补丁"; exit 1; }
+          echo "应用 $(basename "$PATCH_FILE")"
+          patch -p1 < "$PATCH_FILE"
+
+      - name: 准备 defconfig
+        run: |
+          set -euo pipefail
+          cd "$KERNEL_DIR"
+          ARCH="${{ inputs.arch }}"
+          DEF="$KERNEL_DIR/arch/${ARCH}/configs/${{ inputs.defconfig }}"
+          [ -f "$DEF" ] || { echo "::error::未找到 defconfig: $DEF"; ls "arch/${ARCH}/configs/" | head -20; exit 1; }
+
+          set_cfg() {
+            local k="$1" v="$2"
+            if grep -qE "^${k}=" "$DEF"; then sed -i -E "s|^${k}=.*|${k}=${v}|" "$DEF"
+            elif grep -qE "^# ${k} is not set" "$DEF"; then sed -i -E "s|^# ${k} is not set|${k}=${v}|" "$DEF"
+            else echo "${k}=${v}" >> "$DEF"; fi
+          }
+
+          [ "${{ inputs.ksu_variant }}" != "none" ] && set_cfg CONFIG_KSU y
+          set_cfg CONFIG_OVERLAY_FS y
+
+          case "${{ steps.hook.outputs.mode }}" in
+            manual)
+              case "${{ inputs.ksu_variant }}" in
+                kernelsu-next|sukisu-ultra) set_cfg CONFIG_KSU_MANUAL_HOOK y ;;
+                resukisu) set_cfg CONFIG_KSU_MANUAL_HOOK y; set_cfg CONFIG_DEBUG_KERNEL y; set_cfg CONFIG_KALLSYMS y; set_cfg CONFIG_KALLSYMS_ALL y ;;
+              esac ;;
+            kprobes)
+              set_cfg CONFIG_MODULES y; set_cfg CONFIG_KPROBES y; set_cfg CONFIG_HAVE_KPROBES y
+              set_cfg CONFIG_KPROBE_EVENTS y; set_cfg CONFIG_KRETPROBES y
+              [ "${{ inputs.ksu_variant }}" = "kernelsu-next" ] && set_cfg CONFIG_KSU_KPROBES_HOOK y ;;
+          esac
+
+          if [ "${{ inputs.use_susfs }}" = "true" ]; then
+            for c in CONFIG_KSU_SUSFS CONFIG_KSU_SUSFS_SUS_PATH CONFIG_KSU_SUSFS_SUS_MOUNT CONFIG_KSU_SUSFS_SUS_KSTAT CONFIG_KSU_SUSFS_SPOOF_UNAME CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG CONFIG_KSU_SUSFS_OPEN_REDIRECT CONFIG_KSU_SUSFS_SUS_MAP; do
+              set_cfg "$c" y
+            done
+          fi
+
+          if [ "${{ inputs.disable_lto }}" = "true" ]; then
+            set_cfg CONFIG_LTO n; set_cfg CONFIG_LTO_CLANG n; set_cfg CONFIG_LTO_CLANG_THIN n; set_cfg CONFIG_LTO_NONE y
+          fi
+          [ "${{ inputs.disable_cc_werror }}" = "true" ] && set_cfg CONFIG_CC_WERROR n
+
+          if [ -n "${{ inputs.extra_defconfig }}" ]; then
+            for kv in $(printf '%s' "${{ inputs.extra_defconfig }}" | tr '\n' ' '); do
+              [ -n "$kv" ] || continue
+              case "$kv" in *=*) set_cfg "${kv%%=*}" "${kv#*=}" ;; *) echo "::warning::忽略格式错误: $kv" ;; esac
+            done
+          fi
+
+          # 去掉 -dirty 后缀，产物名更稳定
+          [ -f scripts/setlocalversion ] && sed -i 's/-dirty//g' scripts/setlocalversion || true
+
+      - name: 编译内核
+        run: |
+          set -euo pipefail
+          cd "$KERNEL_DIR"
+          ARCH="${{ inputs.arch }}"
+          export PATH="$CLANG_DIR/bin:$PATH"
+          export KBUILD_BUILD_USER=Github-Action
+          export KBUILD_BUILD_HOST=github-actions
+          unset DISABLE_LTO || true
+
+          ARGS="O=out ARCH=$ARCH CC=clang"
+          if [ "${{ inputs.use_llvm }}" = "true" ]; then
+            ARGS="$ARGS LLVM=1 LLVM_IAS=1"
+          else
+            if [ "$ARCH" = "arm64" ]; then
+              ARGS="$ARGS CLANG_TRIPLE=aarch64-linux-gnu- CROSS_COMPILE=$GCC64_DIR/bin/aarch64-linux-android- CROSS_COMPILE_ARM32=$GCC32_DIR/bin/arm-linux-androideabi- LD=ld.lld"
+            else
+              ARGS="$ARGS CLANG_TRIPLE=arm-linux-gnueabi- CROSS_COMPILE=$GCC32_DIR/bin/arm-linux-androideabi- LD=ld.lld"
+            fi
+          fi
+          [ -n "${{ inputs.extra_make_args }}" ] && ARGS="$ARGS ${{ inputs.extra_make_args }}"
+
+          # shellcheck disable=SC2086
+          make -j"$(nproc --all)" $ARGS "${{ inputs.defconfig }}" || { echo "::error::defconfig 生成失败"; exit 1; }
+          # shellcheck disable=SC2086
+          make -j"$(nproc --all)" $ARGS CC="ccache clang" || { echo "::error::内核编译失败"; exit 1; }
+
+      - name: 校验产物
+        run: |
+          set -euo pipefail
+          BOOT="$OUT/arch/${{ inputs.arch }}/boot"
+          IMG="$BOOT/${{ inputs.image_name }}"
+          [ -f "$IMG" ] || { echo "::error::未找到产物 $IMG"; ls "$BOOT" | head -30; exit 1; }
+          echo "产物: $IMG ($(du -h "$IMG" | cut -f1))"
+          if [ "${{ inputs.need_dtbo }}" = "true" ] && [ ! -f "$BOOT/dtbo.img" ]; then
+            echo "::error::需要 dtbo.img 但未生成"; exit 1
+          fi
+
+      - name: 打包 AnyKernel3
+        run: |
+          set -euo pipefail
+          BOOT="$OUT/arch/${{ inputs.arch }}/boot"
+          cp "$BOOT/${{ inputs.image_name }}" "$ANYKERNEL3/"
+          [ "${{ inputs.need_dtbo }}" = "true" ] && cp "$BOOT/dtbo.img" "$ANYKERNEL3/"
+          cd "$ANYKERNEL3"
+          ZIP="$WORKSPACE/nongki-${{ inputs.kernel_series }}-${{ inputs.ksu_variant }}-AnyKernel3.zip"
+          rm -f "$ZIP"
+          zip -qr "$ZIP" ./*
+          echo "已打包: $ZIP"
+
+      - name: 构建信息
+        id: meta
+        run: |
+          {
+            echo "tag=nongki-${{ inputs.kernel_series }}-${{ inputs.ksu_variant }}-r${{ github.run_number }}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: nongki-${{ inputs.kernel_series }}-${{ inputs.ksu_variant }}
+          path: |
+            kernel_workspace/*AnyKernel3.zip
+            kernel_workspace/android-kernel/out/arch/*/boot/${{ inputs.image_name }}
+            kernel_workspace/android-kernel/out/arch/*/boot/dtbo.img
+          if-no-files-found: warn
+          retention-days: 7
+
+  release:
+    name: "发布 Release"
+    needs: build
+    if: inputs.publish_release
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: 下载产物
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: true
+      - name: 发布
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ needs.build.outputs.tag }}
+          name: "非GKI ${{ inputs.kernel_series }} · ${{ inputs.ksu_variant }} · r${{ github.run_number }}"
+          files: artifacts/**/*
+          fail_on_unmatched_files: false
+          generate_release_notes: false

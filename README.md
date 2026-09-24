@@ -24,9 +24,12 @@ Android GKI 内核自动化构建（GitHub Actions）。基于 [jiuxiao226/Kerne
 │  └─ kpm/                      # KPM 镜像补丁（编译后）
 ├─ matrix/
 │  └─ versions.tsv             # 矩阵版本表（android|kernel|sub|patch|revision）
+├─ nongki/
+│  └─ legacy_ksu_hooks.sh      # 4.x/5.4 手动 hook 补丁（KernelSU 上游）
 └─ workflows/
-   ├─ build-kernel.yml          # 构建入口（workflow_dispatch / workflow_call）
-   └─ matrix-build.yml          # 矩阵构建入口
+   ├─ build-kernel.yml          # GKI 构建入口（workflow_dispatch / workflow_call）
+   ├─ matrix-build.yml          # GKI 矩阵构建入口
+   └─ non-gki-build.yml         # 非 GKI（4.x / 5.4）构建入口
 ```
 
 ---
@@ -132,6 +135,61 @@ Android GKI 内核自动化构建（GitHub Actions）。基于 [jiuxiao226/Kerne
 
 ---
 
+## 4 系列（非 GKI）特别说明
+
+> ⚠️ 4.x 与 GKI（5.10+）**完全不同**：没有 AOSP 通用源码，**必须自备设备内核源码**。工作流 `非 GKI 内核构建（4.x / 5.4）`（`.github/workflows/non-gki-build.yml`）用 `make` + AOSP Clang 构建，与上面的 GKI 流程相互独立。
+
+### 你需要提供的
+| 输入 | 说明 |
+|---|---|
+| `kernel_source` / `kernel_source_branch` | 设备内核仓库与分支 |
+| `defconfig` | `arch/<arch>/configs/` 下的 defconfig 路径（可含子目录，如 `vendor/wayne_defconfig`） |
+| `image_name` | 产物名，如 `Image.gz-dtb` / `Image.gz` / `Image` |
+| `arch` | `arm64` 或 `arm` |
+| `kernel_series` | `4.4 / 4.9 / 4.14 / 4.19 / 5.4`，决定默认工具链与 KSU ref |
+
+### 工具链（自动）
+| 系列 | Clang | binutils |
+|---|---|---|
+| 4.4 / 4.9 / 4.14 / 4.19 | AOSP `master-kernel-build-2022` / `r450784e` | GCC 4.9（aarch64 + arm） |
+| 5.4 | AOSP `main-kernel-build-2024` / `r510928` | GCC 4.9 |
+
+> 新 Clang 常无法编译 4.x（旧语法/更严警告），因此默认锁在 `r450784e`；`clang_branch` / `clang_version` 可手动覆盖，`use_llvm=true` 通常只适合 5.x。
+
+### KernelSU
+| 变体 | 默认 ref | 说明 |
+|---|---|---|
+| `resukisu`（推荐） | `main` | 面向老内核/非 GKI |
+| `sukisu-ultra` | `builtin` | 自带 SUSFS |
+| `kernelsu` | `v0.9.5`（<5.10） | 官方自 v1.0 起不再支持非 GKI |
+| `kernelsu-next` | `legacy`（<5.10） | 老内核用 `legacy` |
+| `none` | — | 不集成 root |
+
+**hook 方式**：4.x 上 `kprobes` 经常「装上了但 su 无反应」，所以 `hook_mode=auto` 在老内核会自动改用手动 hook，由 `.github/nongki/legacy_ksu_hooks.sh` 往 `fs/exec.c`、`fs/open.c`、`fs/read_write.c`、`fs/stat.c`、`drivers/input/input.c` 注入 syscall hook（逻辑源自 KernelSU 上游，GPL-3.0）。
+
+### SUSFS（实验性，默认关闭）
+- 仅 `4.9 / 4.14 / 4.19 / 5.4` 有非 GKI 分支（`kernel-4.9` 等）；**4.4 无**。
+- susfs4ksu 的非 GKI 分支自 2025 初起基本未更新，可能因内核树差异而打补丁失败；失败会中止构建，可关闭 `use_susfs` 重试。
+- 更稳的组合是 `ksu_variant=sukisu-ultra` + `ksu_ref=builtin`（自带 SUSFS）。
+
+### 目前未包含
+- `boot.img` 重打包（需要与设备/ROM 匹配的原始 boot 镜像，且分区结构各异）。
+- DTBO **生成**（`need_dtbo=true` 只是把已生成的 `dtbo.img` 一起打包）。
+- 非 GKI 的 KPM（`patch_linux` 对老内核支持不稳定）。
+
+### 示例
+默认值即为一个可跑通的 4.19 组合（来自 xiaoleGun 的示例设备）：
+```
+kernel_series=4.19
+kernel_source=https://github.com/xiaoleGun/android_kernel_xiaomi_wayne-4.19
+kernel_source_branch=twrp-12
+defconfig=vendor/wayne_defconfig
+image_name=Image.gz-dtb
+```
+> 换你自己的设备时，把上面四项改成你的内核仓库/分支/defconfig/产物名即可。
+
+---
+
 ## 注意事项
 
 - **ZRAM 完整算法**：`6.12` 使用新式 zram backend，会自动跳过 legacy `LZ4K/LZ4KD/LZ4K_OPLUS` 补丁栈。
@@ -149,4 +207,4 @@ Android GKI 内核自动化构建（GitHub Actions）。基于 [jiuxiao226/Kerne
 
 ## 许可
 
-本仓库自身的工作流与脚本以 GPL-3.0-or-later 发布；构建时拉取的各上游组件保留其各自许可。
+本仓库不包含独立的 LICENSE 文件；构建时拉取或参考的各上游组件保留其各自许可，见 [THIRD_PARTY_NOTICES.md](THIRD_PARTY_NOTICES.md)。
