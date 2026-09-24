@@ -12,11 +12,17 @@ on:
   workflow_dispatch:
     inputs:
       android_scope:
-        description: "构建范围（All=全部版本×全部子版本，量很大；建议先选单个版本）"
+        description: "构建范围（All=全部 Android 版本）"
         required: true
         type: choice
         options: [All, android12, android13, android14, android15, android16]
-        default: android14
+        default: All
+      sub_version_mode:
+        description: "子版本范围"
+        required: true
+        type: choice
+        options: ["Latest(最新可用)", "All(全部)"]
+        default: "Latest(最新可用)"
       ksu_variant:
         description: "KSU 变体"
         required: true
@@ -104,6 +110,7 @@ jobs:
         run: |
           set -euo pipefail
           SCOPE="${{ inputs.android_scope }}"
+          MODE="${{ inputs.sub_version_mode }}"
 
           # 格式: android|kernel|sub_level|os_patch_level|revision
           # 列表参考 jiuxiao226/KernelSU-Actions 与 WildKernels/GKI_KernelSU_SUSFS
@@ -192,6 +199,17 @@ jobs:
           android16|6.12|58|2025-12|r1
           android16|6.12|X|lts|r1"
 
+          # 选取要构建的行：Latest 模式每个版本只取 sub_level 最大的数值档（忽略 X/lts）
+          if [ "$MODE" = "All(全部)" ]; then
+            ROWS="$TABLE"
+          else
+            ROWS=""
+            for A in android12 android13 android14 android15 android16; do
+              R="$(echo "$TABLE" | awk -F'|' -v a="$A" '$1==a && $3 ~ /^[0-9]+$/ {print $0}' | sort -t'|' -k3,3n | tail -n1)"
+              [ -n "$R" ] && ROWS="${ROWS}${R}"$'\n'
+            done
+          fi
+
           JSON="[]"
           while IFS='|' read -r A K S P R; do
             [ -z "$A" ] && continue
@@ -201,7 +219,7 @@ jobs:
             fi
             JSON=$(echo "$JSON" | jq -c --arg a "$A" --arg k "$K" --arg s "$S" --arg p "$P" --arg r "$R" \
               '. + [{"android_version":$a,"kernel_version":$k,"sub_level":$s,"os_patch_level":$p,"revision":$r}]')
-          done <<< "$TABLE"
+          done <<< "$ROWS"
 
           echo "matrix=$JSON" >> "$GITHUB_OUTPUT"
           echo "count=$(echo "$JSON" | jq 'length')" >> "$GITHUB_OUTPUT"

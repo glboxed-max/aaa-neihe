@@ -90,20 +90,24 @@ Android GKI 内核自动化构建（GitHub Actions）。基于 [jiuxiao226/Kerne
 
 工作流 **`矩阵内核构建`**（`.github/workflows/matrix-build.yml`）可按 Android 版本一次扇出多个内核构建。
 
-- `android_scope`：`All`（全部版本 × 全部子版本，约 **84** 个目标）或指定单个版本（默认 `android14`）。
-- 各目标的 `(sub_level, os_patch_level, revision)` 在 `matrix-build.yml` 的 `TABLE` 中定义，已按 jiuxiao226 / WildKernels 的完整矩阵补全：
-  | 范围 | 子版本档数 | 内核 |
+- `android_scope`：`All`（全部 Android 版本）或指定单个版本，默认 `All`。
+- `sub_version_mode`：
+  - `Latest(最新可用)`（默认）—— 每个版本只拉 **sub_level 最大的数值档**；
+  - `All(全部)` —— 跑该版本的全部子版本。
+- 默认组合 = 每个 Android 版本最新一档，即 **5 个目标**。
+- 完整子版本表（`TABLE`，含 `revision`）已按 jiuxiao226 / WildKernels 的矩阵补全，共 84 档（a12=22 / a13=20 / a14=23 / a15=14 / a16=5），仅在 `All(全部)` 模式使用：
+  | 范围 | 内核 | 最新可用档 |
   |---|---|---|
-  | android12 | 22（含 `lts`） | 5.10 |
-  | android13 | 20（含 `lts`） | 5.15 |
-  | android14 | 23（含 `lts`） | 6.1 |
-  | android15 | 14（含 `lts`） | 6.6 |
-  | android16 | 5（含 `lts`） | 6.12 |
+  | android12 | 5.10 | 246 / 2025-12 |
+  | android13 | 5.15 | 194 / 2025-12 |
+  | android14 | 6.1 | 162 / 2026-03 |
+  | android15 | 6.6 | 118 / 2026-01 |
+  | android16 | 6.12 | 58 / 2025-12 |
 - 可按需在 `TABLE` 中增删行；`revision` 仅 android12 构建 boot 镜像时使用。
 - 其余选项与单次构建一致，会透传给 `build-kernel.yml`。
 - 开启 `publish_release` 时，每个目标会各自发布一个 Release（tag 含 Android/内核/子版本/变体，互不冲突）。
 
-> ⚠️ `All` 会一次排入约 84 个内核构建，非常耗时长与额度。建议先用单次构建验证某组合能通过，再按单个版本范围跑矩阵。
+> ⚠️ 只有把 `sub_version_mode` 选成 `All(全部)` 搭配 `android_scope=All` 时才会排入全部 84 个构建，非常耗时/耗额度。
 
 ---
 
