@@ -1,6 +1,7 @@
 # GKI 内核版本表（android|kernel|sub_level|os_patch_level|revision）
 # - revision 仅 android12 构建 boot 镜像时使用
 # - sub_level 为 X 表示 lts 分支（“最新子版本”模式会自动忽略）
+# - 范围对齐 ABK：android12-5.10 / android13-5.15 / android14-6.1 / android15-6.6 / android16-6.12
 # - 数据参考 WildKernels/GKI_KernelSU_SUSFS 与 jiuxiao226/KernelSU-Actions
 
 # ---------- 5 系列 ----------
@@ -29,29 +30,6 @@ android12|5.10|246|2025-12|r1
 android12|5.10|252|2026-04|r1
 android12|5.10|X|lts|r1
 
-android13|5.10|107|2022-04|r1
-android13|5.10|149|2022-12|r1
-android13|5.10|157|2023-02|r1
-android13|5.10|168|2023-04|r1
-android13|5.10|177|2023-06|r1
-android13|5.10|186|2023-08|r1
-android13|5.10|189|2023-10|r1
-android13|5.10|198|2023-12|r1
-android13|5.10|205|2024-02|r1
-android13|5.10|209|2024-04|r1
-android13|5.10|210|2024-06|r1
-android13|5.10|214|2024-07|r1
-android13|5.10|218|2024-08|r1
-android13|5.10|223|2024-09|r1
-android13|5.10|228|2025-01|r1
-android13|5.10|234|2025-03|r1
-android13|5.10|236|2025-05|r1
-android13|5.10|238|2025-07|r1
-android13|5.10|243|2025-10|r1
-android13|5.10|246|2026-01|r1
-android13|5.10|252|2026-04|r1
-android13|5.10|X|lts|r1
-
 android13|5.15|41|2022-06|r1
 android13|5.15|74|2023-01|r1
 android13|5.15|78|2023-03|r1
@@ -75,25 +53,6 @@ android13|5.15|194|2025-12|r1
 android13|5.15|197|2026-03|r1
 android13|5.15|206|2026-06|r1
 android13|5.15|X|lts|r1
-
-android14|5.15|110|2023-06|r1
-android14|5.15|131|2023-11|r1
-android14|5.15|137|2024-01|r1
-android14|5.15|144|2024-02|r1
-android14|5.15|148|2024-04|r1
-android14|5.15|149|2024-06|r1
-android14|5.15|153|2024-07|r1
-android14|5.15|158|2024-08|r1
-android14|5.15|164|2024-09|r1
-android14|5.15|167|2024-11|r1
-android14|5.15|170|2025-01|r1
-android14|5.15|178|2025-03|r1
-android14|5.15|180|2025-05|r1
-android14|5.15|185|2025-07|r1
-android14|5.15|192|2025-10|r1
-android14|5.15|196|2026-01|r1
-android14|5.15|202|2026-04|r1
-android14|5.15|X|lts|r1
 
 # ---------- 6 系列 ----------
 android14|6.1|25|2023-10|r1
