@@ -12,11 +12,11 @@ on:
   workflow_dispatch:
     inputs:
       android_scope:
-        description: "构建范围（All=每个 Android 版本的最新一档）"
+        description: "构建范围（All=全部版本×全部子版本，量很大；建议先选单个版本）"
         required: true
         type: choice
         options: [All, android12, android13, android14, android15, android16]
-        default: All
+        default: android14
       ksu_variant:
         description: "KSU 变体"
         required: true
@@ -105,21 +105,102 @@ jobs:
           set -euo pipefail
           SCOPE="${{ inputs.android_scope }}"
 
-          # android|kernel|sub_level|os_patch_level（各版本最新一档，可自行增删）
-          TABLE="android12|5.10|246|2025-12
-          android13|5.15|194|2025-12
-          android14|6.1|162|2026-03
-          android15|6.6|118|2026-01
-          android16|6.12|58|2025-12"
+          # 格式: android|kernel|sub_level|os_patch_level|revision
+          # 列表参考 jiuxiao226/KernelSU-Actions 与 WildKernels/GKI_KernelSU_SUSFS
+          TABLE="android12|5.10|66|2022-01|r11
+          android12|5.10|81|2022-03|r11
+          android12|5.10|101|2022-04|r28
+          android12|5.10|110|2022-07|r1
+          android12|5.10|117|2022-09|r1
+          android12|5.10|136|2022-11|r15
+          android12|5.10|149|2023-01|r1
+          android12|5.10|160|2023-03|r1
+          android12|5.10|168|2023-04|r9
+          android12|5.10|177|2023-07|r3
+          android12|5.10|185|2023-09|r1
+          android12|5.10|198|2024-01|r17
+          android12|5.10|205|2024-03|r1
+          android12|5.10|209|2024-05|r13
+          android12|5.10|218|2024-08|r14
+          android12|5.10|226|2024-11|r8
+          android12|5.10|233|2025-02|r1
+          android12|5.10|236|2025-05|r1
+          android12|5.10|237|2025-06|r1
+          android12|5.10|240|2025-09|r1
+          android12|5.10|246|2025-12|r1
+          android12|5.10|X|lts|r1
+          android13|5.15|74|2023-01|r1
+          android13|5.15|78|2023-03|r1
+          android13|5.15|94|2023-05|r1
+          android13|5.15|104|2023-07|r1
+          android13|5.15|119|2023-09|r1
+          android13|5.15|123|2023-11|r1
+          android13|5.15|137|2024-01|r1
+          android13|5.15|144|2024-03|r1
+          android13|5.15|148|2024-05|r1
+          android13|5.15|149|2024-07|r1
+          android13|5.15|151|2024-08|r1
+          android13|5.15|153|2024-09|r1
+          android13|5.15|167|2024-11|r1
+          android13|5.15|170|2025-01|r1
+          android13|5.15|178|2025-03|r1
+          android13|5.15|180|2025-05|r1
+          android13|5.15|185|2025-07|r1
+          android13|5.15|189|2025-09|r1
+          android13|5.15|194|2025-12|r1
+          android13|5.15|X|lts|r1
+          android14|6.1|25|2023-10|r1
+          android14|6.1|43|2023-11|r1
+          android14|6.1|57|2024-01|r1
+          android14|6.1|68|2024-03|r1
+          android14|6.1|75|2024-05|r1
+          android14|6.1|78|2024-06|r1
+          android14|6.1|84|2024-07|r1
+          android14|6.1|90|2024-08|r1
+          android14|6.1|93|2024-09|r1
+          android14|6.1|99|2024-10|r1
+          android14|6.1|112|2024-11|r1
+          android14|6.1|115|2024-12|r1
+          android14|6.1|118|2025-01|r1
+          android14|6.1|124|2025-02|r1
+          android14|6.1|128|2025-03|r1
+          android14|6.1|129|2025-04|r1
+          android14|6.1|134|2025-05|r1
+          android14|6.1|138|2025-06|r1
+          android14|6.1|141|2025-07|r1
+          android14|6.1|145|2025-09|r1
+          android14|6.1|157|2025-12|r1
+          android14|6.1|162|2026-03|r1
+          android14|6.1|X|lts|r1
+          android15|6.6|50|2024-10|r1
+          android15|6.6|56|2024-11|r1
+          android15|6.6|57|2024-12|r1
+          android15|6.6|58|2025-01|r1
+          android15|6.6|66|2025-02|r1
+          android15|6.6|77|2025-03|r1
+          android15|6.6|82|2025-04|r1
+          android15|6.6|87|2025-05|r1
+          android15|6.6|89|2025-06|r1
+          android15|6.6|92|2025-07|r1
+          android15|6.6|98|2025-09|r1
+          android15|6.6|102|2025-10|r1
+          android15|6.6|118|2026-01|r1
+          android15|6.6|X|lts|r1
+          android16|6.12|23|2025-06|r1
+          android16|6.12|30|2025-07|r1
+          android16|6.12|38|2025-09|r1
+          android16|6.12|58|2025-12|r1
+          android16|6.12|X|lts|r1"
 
           JSON="[]"
-          while IFS='|' read -r A K S P; do
+          while IFS='|' read -r A K S P R; do
             [ -z "$A" ] && continue
+            [ -z "$R" ] && R=r1
             if [ "$SCOPE" != "All" ] && [ "$SCOPE" != "$A" ]; then
               continue
             fi
-            JSON=$(echo "$JSON" | jq -c --arg a "$A" --arg k "$K" --arg s "$S" --arg p "$P" \
-              '. + [{"android_version":$a,"kernel_version":$k,"sub_level":$s,"os_patch_level":$p}]')
+            JSON=$(echo "$JSON" | jq -c --arg a "$A" --arg k "$K" --arg s "$S" --arg p "$P" --arg r "$R" \
+              '. + [{"android_version":$a,"kernel_version":$k,"sub_level":$s,"os_patch_level":$p,"revision":$r}]')
           done <<< "$TABLE"
 
           echo "matrix=$JSON" >> "$GITHUB_OUTPUT"
@@ -141,7 +222,7 @@ jobs:
       kernel_version: ${{ matrix.target.kernel_version }}
       sub_level: ${{ matrix.target.sub_level }}
       os_patch_level: ${{ matrix.target.os_patch_level }}
-      revision: "r1"
+      revision: ${{ matrix.target.revision }}
       ksu_variant: ${{ inputs.ksu_variant }}
       ksu_branch: ${{ inputs.ksu_branch }}
       custom_ref: ${{ inputs.custom_ref }}

@@ -90,10 +90,20 @@ Android GKI 内核自动化构建（GitHub Actions）。基于 [jiuxiao226/Kerne
 
 工作流 **`矩阵内核构建`**（`.github/workflows/matrix-build.yml`）可按 Android 版本一次扇出多个内核构建。
 
-- `android_scope`：`All`（每个 Android 版本最新一档）或指定单个版本。
+- `android_scope`：`All`（全部版本 × 全部子版本，约 **84** 个目标）或指定单个版本（默认 `android14`）。
+- 各目标的 `(sub_level, os_patch_level, revision)` 在 `matrix-build.yml` 的 `TABLE` 中定义，已按 jiuxiao226 / WildKernels 的完整矩阵补全：
+  | 范围 | 子版本档数 | 内核 |
+  |---|---|---|
+  | android12 | 22（含 `lts`） | 5.10 |
+  | android13 | 20（含 `lts`） | 5.15 |
+  | android14 | 23（含 `lts`） | 6.1 |
+  | android15 | 14（含 `lts`） | 6.6 |
+  | android16 | 5（含 `lts`） | 6.12 |
+- 可按需在 `TABLE` 中增删行；`revision` 仅 android12 构建 boot 镜像时使用。
 - 其余选项与单次构建一致，会透传给 `build-kernel.yml`。
-- 各目标的 `(sub_level, os_patch_level)` 在 `matrix-build.yml` 的 `TABLE` 中定义，可按需增删。
 - 开启 `publish_release` 时，每个目标会各自发布一个 Release（tag 含 Android/内核/子版本/变体，互不冲突）。
+
+> ⚠️ `All` 会一次排入约 84 个内核构建，非常耗时长与额度。建议先用单次构建验证某组合能通过，再按单个版本范围跑矩阵。
 
 ---
 
