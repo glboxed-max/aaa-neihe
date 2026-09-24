@@ -289,20 +289,27 @@ jobs:
         run: |
           set -euo pipefail
           SERIES="${{ inputs.kernel_series }}"
+          echo "SUSFS_OK=false" >> "$GITHUB_ENV"
           case "$SERIES" in
             4.9) BR=kernel-4.9 ;; 4.14) BR=kernel-4.14 ;; 4.19) BR=kernel-4.19 ;; 5.4) BR=kernel-5.4 ;;
-            4.4) echo "::error::SUSFS 无 4.4 非 GKI 分支"; exit 1 ;;
-            *) echo "::error::未知系列"; exit 1 ;;
+            *) echo "::warning::SUSFS 无 $SERIES 非 GKI 分支，跳过 SUSFS"; exit 0 ;;
           esac
           git clone --depth 1 -b "$BR" https://gitlab.com/simonpunk/susfs4ksu.git "$SUSFS4KSU"
           cd "$KERNEL_DIR"
-          cp "$SUSFS4KSU"/kernel_patches/fs/* fs/ 2>/dev/null || true
-          cp "$SUSFS4KSU"/kernel_patches/include/linux/* include/linux/ 2>/dev/null || true
           PATCH_FILE="$(ls "$SUSFS4KSU"/kernel_patches/50_*_in_kernel-${SERIES}.patch 2>/dev/null | head -n1 || true)"
           [ -n "$PATCH_FILE" ] || PATCH_FILE="$(ls "$SUSFS4KSU"/kernel_patches/50_*.patch 2>/dev/null | head -n1 || true)"
-          [ -n "$PATCH_FILE" ] || { echo "::error::未找到 SUSFS 补丁"; exit 1; }
-          echo "应用 $(basename "$PATCH_FILE")"
-          patch -p1 < "$PATCH_FILE"
+          [ -n "$PATCH_FILE" ] || { echo "::warning::未找到 SUSFS 补丁，跳过 SUSFS"; exit 0; }
+
+          # 非 GKI SUSFS 分支陈旧，强行打补丁会留下半成品；先 dry-run，不匹配就整块跳过。
+          if patch -p1 --dry-run < "$PATCH_FILE" >/dev/null 2>&1; then
+            cp "$SUSFS4KSU"/kernel_patches/fs/* fs/ 2>/dev/null || true
+            cp "$SUSFS4KSU"/kernel_patches/include/linux/* include/linux/ 2>/dev/null || true
+            patch -p1 < "$PATCH_FILE"
+            echo "SUSFS_OK=true" >> "$GITHUB_ENV"
+            echo "SUSFS 已应用"
+          else
+            echo "::warning::SUSFS 非 GKI 补丁与当前内核树不匹配，已跳过 SUSFS（继续构建不带 SUSFS 的内核）"
+          fi
 
       - name: 准备 defconfig
         run: |
@@ -334,7 +341,7 @@ jobs:
               [ "${{ inputs.ksu_variant }}" = "kernelsu-next" ] && set_cfg CONFIG_KSU_KPROBES_HOOK y ;;
           esac
 
-          if [ "${{ inputs.use_susfs }}" = "true" ]; then
+          if [ "${{ inputs.use_susfs }}" = "true" ] && [ "${SUSFS_OK:-false}" = "true" ]; then
             for c in CONFIG_KSU_SUSFS CONFIG_KSU_SUSFS_SUS_PATH CONFIG_KSU_SUSFS_SUS_MOUNT CONFIG_KSU_SUSFS_SUS_KSTAT CONFIG_KSU_SUSFS_SPOOF_UNAME CONFIG_KSU_SUSFS_HIDE_KSU_SUSFS_SYMBOLS CONFIG_KSU_SUSFS_SPOOF_CMDLINE_OR_BOOTCONFIG CONFIG_KSU_SUSFS_OPEN_REDIRECT CONFIG_KSU_SUSFS_SUS_MAP; do
               set_cfg "$c" y
             done
