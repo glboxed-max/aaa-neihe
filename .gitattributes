@@ -1,0 +1,7 @@
+# 统一换行符，避免 patch/脚本在 Windows 与 Linux 之间出现 CRLF 问题
+* text=auto eol=lf
+*.patch text eol=lf
+*.sh text eol=lf
+*.yml text eol=lf
+*.yaml text eol=lf
+*.md text eol=lf
