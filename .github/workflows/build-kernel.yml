@@ -121,6 +121,33 @@ on:
         type: boolean
         default: false
 
+      # ---- 对齐 WildKernels/GKI_KernelSU_SUSFS 的额外能力 ----
+      use_kernel_hygiene:
+        description: "内核清理：去 -dirty + 移除受保护导出/受保护模块（对齐 WildKernels）"
+        required: false
+        type: boolean
+        default: true
+      use_misc_configs:
+        description: "启用杂项配置（OverlayFS / KALLSYMS）"
+        required: false
+        type: boolean
+        default: true
+      use_ptrace:
+        description: "应用 GKI ptrace 补丁（仅内核 < 5.16 生效）"
+        required: false
+        type: boolean
+        default: true
+      use_performance:
+        description: "应用性能优化补丁（来源 WildKernels/kernel_patches）"
+        required: false
+        type: boolean
+        default: false
+      use_bbrv3:
+        description: "应用 BBRv3 拥塞控制补丁（按 android-内核 版本选择）"
+        required: false
+        type: boolean
+        default: false
+
       # ==================== 高级配置 ====================
       version:
         description: "自定义内核版本字符串（留空则自动生成）"
@@ -227,6 +254,26 @@ on:
         type: string
         default: ""
       use_rekernel:
+        required: false
+        type: boolean
+        default: false
+      use_kernel_hygiene:
+        required: false
+        type: boolean
+        default: true
+      use_misc_configs:
+        required: false
+        type: boolean
+        default: true
+      use_ptrace:
+        required: false
+        type: boolean
+        default: true
+      use_performance:
+        required: false
+        type: boolean
+        default: false
+      use_bbrv3:
         required: false
         type: boolean
         default: false
@@ -488,6 +535,21 @@ jobs:
               || echo "::warning::ABK 资源克隆失败，DDK/ZRAM 升级可能不可用"
           fi
 
+      - name: 克隆 kernel_patches（性能 / BBRv3 / ptrace 补丁源）
+        if: inputs.use_performance || inputs.use_bbrv3 || inputs.use_ptrace
+        run: |
+          set -euo pipefail
+          cd "$GITHUB_WORKSPACE"
+          if [ -d kernel_patches/.git ]; then
+            echo "kernel_patches 已存在，跳过克隆"
+            exit 0
+          fi
+          # 来源：WildKernels/kernel_patches（性能/BBRv3/ptrace 补丁集合）
+          git clone --depth 1 https://github.com/WildKernels/kernel_patches.git kernel_patches \
+            || git clone --depth 1 -b main https://github.com/WildKernels/kernel_patches.git kernel_patches \
+            || { echo "::error::kernel_patches 克隆失败"; exit 1; }
+          echo "kernel_patches commit: $(git -C kernel_patches rev-parse HEAD)"
+
       - name: 初始化并同步内核源码
         run: |
           set -euo pipefail
@@ -713,6 +775,35 @@ jobs:
         uses: ./.github/actions/rekernel
         with:
           kernel_version: ${{ inputs.kernel_version }}
+
+      # ---- 以下是照搬 WildKernels/GKI_KernelSU_SUSFS 的额外能力 ----
+      - name: 应用 Ptrace 补丁（< 5.16）
+        if: inputs.use_ptrace
+        uses: ./.github/actions/ptrace
+        with:
+          kernel_version: ${{ inputs.kernel_version }}
+
+      - name: 应用 BBRv3 补丁
+        if: inputs.use_bbrv3
+        uses: ./.github/actions/bbrv3
+        with:
+          android_version: ${{ inputs.android_version }}
+          kernel_version: ${{ inputs.kernel_version }}
+          sub_level: ${{ steps.resolve.outputs.sub_level }}
+
+      - name: 应用性能优化补丁
+        if: inputs.use_performance
+        uses: ./.github/actions/performance
+        with:
+          kernel_version: ${{ inputs.kernel_version }}
+
+      - name: 启用杂项内核配置
+        if: inputs.use_misc_configs
+        uses: ./.github/actions/misc-configs
+
+      - name: 内核清理（脏标记 / 受保护导出）
+        if: inputs.use_kernel_hygiene
+        uses: ./.github/actions/kernel-hygiene
 
       - name: 应用自定义内核选项
         if: inputs.custom_kernel_options != ''

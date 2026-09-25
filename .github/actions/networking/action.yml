@@ -95,3 +95,24 @@ runs:
           CONFIG_CIFS=y
           CONFIG_CIFS_XATTR=y
           CONFIG_CIFS_POSIX=y
+
+    # 来源：WildKernels/GKI_KernelSU_SUSFS actions/cifs —— 补全 netfs/keys 依赖
+    - name: 补全网络文件系统依赖配置
+      uses: ./.github/actions/set-kernel-config
+      with:
+        config_list: |
+          CONFIG_NETWORK_FILESYSTEMS=y
+          CONFIG_NETFS_SUPPORT=y
+          CONFIG_KEYS=y
+
+    - name: 修复 android16-6.12 的 CIFS 模块声明
+      if: inputs.android_version == 'android16' && inputs.kernel_version == '6.12'
+      shell: bash
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        set -euo pipefail
+        # netfs 设为内建后，modules.bzl 里仍声明 netfs.ko 会冲突
+        if [ -f modules.bzl ]; then
+          sed -i '/"fs\/netfs\/netfs\.ko",/d' modules.bzl
+          echo "已从 modules.bzl 移除 netfs.ko 声明"
+        fi

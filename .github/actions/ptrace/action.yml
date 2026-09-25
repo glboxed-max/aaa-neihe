@@ -1,0 +1,28 @@
+# ===== 说明：应用 Ptrace 兼容补丁 =====
+# 来源：WildKernels/GKI_KernelSU_SUSFS 的 actions/ptrace + WildKernels/kernel_patches 的 gki_ptrace.patch
+# 版本约束：仅当内核 < 5.16 时需要（5.10 需要；5.15 需要；6.1+ 不需要）
+inputs:
+  kernel_version:
+    description: 内核版本（如 5.10 / 6.1）
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: 应用 Ptrace 补丁
+      shell: bash
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        set -euo pipefail
+        KERNEL_VERSION="${{ inputs.kernel_version }}"
+        MIN_VERSION="5.16"
+
+        # 仅当内核版本 < 5.16 时应用
+        if [ "$(printf '%s\n' "$KERNEL_VERSION" "$MIN_VERSION" | sort -V | head -n1)" = "$KERNEL_VERSION" ]; then
+          PATCH="${{ github.workspace }}/kernel_patches/gki_ptrace.patch"
+          [ -f "$PATCH" ] || { echo "::warning::未找到 $PATCH，跳过 ptrace 补丁"; exit 0; }
+          echo "内核 $KERNEL_VERSION < $MIN_VERSION，应用 ptrace 补丁"
+          patch -p1 -F3 --forward < "$PATCH"
+        else
+          echo "内核 $KERNEL_VERSION >= $MIN_VERSION，跳过 ptrace 补丁"
+        fi

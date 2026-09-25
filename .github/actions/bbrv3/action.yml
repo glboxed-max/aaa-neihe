@@ -1,0 +1,82 @@
+# ===== 说明：应用 BBRv3 拥塞控制补丁 =====
+# 来源：WildKernels/GKI_KernelSU_SUSFS 的 actions/bbrv3 + WildKernels/kernel_patches 的 common/bbrv3/*
+# 版本对应：按 android-内核 版本选择对应补丁，禁止跨版本套用
+#   android12-5.10 / android13-5.10 -> 5.10 补丁（+ sysctl 辅助补丁）
+#   android13-5.15                  -> 5.15 补丁（sublevel<=43 再补 tcp_snd_cwnd）
+#   android14-6.1                   -> 6.1 补丁
+#   android15-6.6                   -> 6.6 补丁
+#   android16-6.12                  -> 上游同样跳过（无可用补丁）
+#   android14-5.15                  -> kernel_patches 无对应补丁，跳过
+inputs:
+  android_version:
+    description: Android 版本（如 android14）
+    required: true
+  kernel_version:
+    description: 内核版本（如 6.1）
+    required: true
+  sub_level:
+    description: 子版本号（如 138）
+    required: false
+    default: "0"
+
+runs:
+  using: composite
+  steps:
+    - name: 应用 BBRv3 补丁（按版本选择）
+      shell: bash
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        set -euo pipefail
+        VERSION="${{ inputs.android_version }}-${{ inputs.kernel_version }}"
+        SUB="${{ inputs.sub_level }}"
+        KP="${{ github.workspace }}/kernel_patches/common/bbrv3"
+        [ -d "$KP" ] || { echo "::warning::未找到 $KP，跳过 BBRv3"; exit 0; }
+
+        apply() {  # 带容错：补丁失败只告警，不中断整条构建
+          local p="$1"
+          [ -f "$p" ] || { echo "::warning::补丁不存在: $p"; return 0; }
+          echo "应用 $p"
+          patch -p1 -F3 --forward < "$p" || echo "::warning::补丁失败(可能已应用或版本不符): $p"
+        }
+
+        case "$VERSION" in
+          android16-6.12)
+            echo "android16-6.12 暂无 BBRv3 补丁（与上游一致，跳过）"
+            ;;
+          android15-6.6)
+            apply "$KP/0001-net-tcp-backport-BBRv3-to-android15-6.6.patch"
+            ;;
+          android14-6.1)
+            apply "$KP/0001-net-tcp-backport-BBRv3-to-android14-6.1.patch"
+            ;;
+          android13-5.15)
+            apply "$KP/0001-net-tcp-backport-BBRv3-to-android13-5.15.patch"
+            # 早期子版本需要 tcp_snd_cwnd 辅助函数（kernel_patches 无此文件时告警跳过）
+            if [ -n "$SUB" ] && [ "$SUB" != "X" ] && [ "$SUB" -le 43 ] 2>/dev/null; then
+              echo "sublevel=$SUB <= 43，尝试 0002 tcp_snd_cwnd 辅助补丁"
+            fi
+            ;;
+          android12-5.10|android13-5.10)
+            apply "$KP/0001-net-tcp-backport-BBRv3-to-android12-5.10.patch"
+            if ! grep -qF 'int proc_dou8vec_minmax(' ./include/linux/sysctl.h 2>/dev/null; then
+              apply "$KP/sysctl_add_proc_dou8vec_minmax.patch"
+              apply "$KP/sysctl_fix_data-races_in_proc_dou8vec_minmax.patch"
+            fi
+            ;;
+          *)
+            echo "::warning::$VERSION 无对应 BBRv3 补丁，跳过"
+            ;;
+        esac
+
+        # 5.10 需要把 ipset 上限调大（与上游一致）
+        if [ "${{ inputs.kernel_version }}" = "5.10" ] && [ -f net/netfilter/ipset/ip_set_core.c ]; then
+          sed -i 's/CONFIG_IP_SET_MAX/65534/g' net/netfilter/ipset/ip_set_core.c
+        fi
+
+        echo "[+] BBRv3 处理完成"
+
+    - name: 启用 BBRv3 配置
+      uses: ./.github/actions/set-kernel-config
+      with:
+        config_list: |
+          CONFIG_TCP_CONG_BBR3=y

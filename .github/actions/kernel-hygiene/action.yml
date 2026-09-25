@@ -1,0 +1,79 @@
+# ===== 说明：内核清理（脏标记 / 受保护导出） =====
+# 来源：WildKernels/GKI_KernelSU_SUSFS 的 actions/clean-kernel-flags + actions/remove-protected-exports
+# 对应版本：gki-2.0（5.10 / 5.15 / 6.1 / 6.6 / 6.12 通用）
+#   - 去掉 setlocalversion 里的 "-dirty" 后缀，避免版本串带脏标记
+#   - Bazel/Kleaf 构建系统下移除 “受保护导出/受保护模块”，否则模块会被 ABI 拦截
+name: 内核清理（脏标记 / 受保护导出）
+description: 清理内核版本脏标记，并在 Bazel 构建系统下移除受保护导出与受保护模块
+
+runs:
+  using: composite
+  steps:
+    - name: 清理 "-dirty" 版本后缀
+      shell: bash
+      working-directory: ${{ github.workspace }}/kernel
+      run: |
+        set -euo pipefail
+        if [ -f "build/build.sh" ]; then
+          # 旧构建系统（5.10 / 5.15 / 早期 6.1）
+          sed -i 's/-dirty//' common/scripts/setlocalversion
+          echo "已清理旧构建系统的 -dirty"
+        else
+          # Bazel / Kleaf 构建系统（较新的 6.1+）
+          sed -i "/stable_scmversion_cmd/s/-maybe-dirty//g" build/kernel/kleaf/impl/stamp.bzl
+          sed -i 's/-dirty//' common/scripts/setlocalversion
+          echo "已清理 Bazel 构建系统的 -dirty"
+        fi
+
+    - name: 移除受保护导出与受保护模块（仅 Bazel）
+      shell: bash
+      working-directory: ${{ github.workspace }}/kernel
+      run: |
+        set -euo pipefail
+
+        # 旧构建系统没有这套机制，直接跳过
+        if [ -f "build/build.sh" ]; then
+          echo "旧构建系统，无需处理受保护导出"
+          exit 0
+        fi
+
+        # 1) 删除受保护导出的清单文件
+        rm -rf common/android/abi_gki_protected_exports_* || true
+        if ls -1 common/android/abi_gki_protected_exports_* >/dev/null 2>&1; then
+          echo "::error::abi_gki_protected_exports_* 删除后仍存在"
+          exit 1
+        fi
+
+        # 2) 从 common/BUILD.bazel 移除 protected_exports_list 引用
+        if grep -q '"protected_exports_list"[[:space:]]*:[[:space:]]*"android/abi_gki_protected_exports_aarch64"' common/BUILD.bazel; then
+          BEFORE="$(sha256sum common/BUILD.bazel | awk '{print $1}')"
+          perl -pi -e 's/^\s*"protected_exports_list"\s*:\s*"android\/abi_gki_protected_exports_aarch64",\s*$//;' common/BUILD.bazel
+          AFTER="$(sha256sum common/BUILD.bazel | awk '{print $1}')"
+          [ "$BEFORE" != "$AFTER" ] || { echo "::error::common/BUILD.bazel 未被修改"; exit 1; }
+          if grep -q '"protected_exports_list"[[:space:]]*:[[:space:]]*"android/abi_gki_protected_exports_aarch64"' common/BUILD.bazel; then
+            echo "::error::protected_exports_list 引用仍存在"; exit 1
+          fi
+          echo "已移除 protected_exports_list"
+        fi
+
+        # 3) 清空 modules.bzl 的 protected_modules
+        if grep -q '^protected_modules = ' common/modules.bzl; then
+          BEFORE="$(sha256sum common/modules.bzl | awk '{print $1}')"
+          sed -i 's/protected_modules = \[.*\]/protected_modules = []/' common/modules.bzl
+          AFTER="$(sha256sum common/modules.bzl | awk '{print $1}')"
+          [ "$BEFORE" != "$AFTER" ] || { echo "::error::common/modules.bzl 未被修改"; exit 1; }
+          grep -q '^protected_modules = \[\]' common/modules.bzl || { echo "::error::protected_modules 未清空"; exit 1; }
+          echo "已清空 protected_modules"
+        fi
+
+        # 4) 6.12+ Bazel：移除 protected_module_names_list
+        if grep -q 'protected_module_names_list' common/BUILD.bazel; then
+          BEFORE="$(sha256sum common/BUILD.bazel | awk '{print $1}')"
+          perl -pi -e 's/^\s*protected_module_names_list\s*=\s*":gki_(?:aarch64|x86_64)_protected_module_names",\s*$//;' common/BUILD.bazel
+          AFTER="$(sha256sum common/BUILD.bazel | awk '{print $1}')"
+          [ "$BEFORE" != "$AFTER" ] || echo "::warning::protected_module_names_list 未匹配到（可能不存在）"
+          if grep -q 'protected_module_names_list' common/BUILD.bazel; then
+            echo "::error::protected_module_names_list 引用仍存在"; exit 1
+          fi
+          echo "已移除 protected_module_names_list"
+        fi

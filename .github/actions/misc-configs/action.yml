@@ -1,0 +1,18 @@
+# ===== 说明：杂项内核配置 =====
+# 来源：WildKernels/GKI_KernelSU_SUSFS 的 actions/misc（Setup Misc Configs）
+# 作用：启用 OverlayFS、KALLSYMS 等常用选项（TMPFS 相关我们基础配置里已有）
+name: 启用杂项内核配置
+description: 启用 OverlayFS / KALLSYMS / TMPFS 等杂项内核配置
+
+runs:
+  using: composite
+  steps:
+    - name: 启用杂项配置
+      uses: ./.github/actions/set-kernel-config
+      with:
+        config_list: |
+          CONFIG_OVERLAY_FS=y
+          CONFIG_TMPFS_XATTR=y
+          CONFIG_TMPFS_POSIX_ACL=y
+          CONFIG_KALLSYMS=y
+          CONFIG_KALLSYMS_ALL=y
