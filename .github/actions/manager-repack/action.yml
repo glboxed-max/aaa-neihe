@@ -98,20 +98,10 @@ runs:
         [ -n "$OLD" ] || { echo "::error::无法从 manifest 读取包名"; exit 1; }
         echo "包名: $OLD -> $NEW"
 
-        OLDP="${OLD//./\/}"
-        NEWP="${NEW//./\/}"
-
-        # 1) 清单：全局替换包名（含组件类名 application/activity/service、authorities、permission 等）
-        sed -i "s|${OLD}|${NEW}|g" dec/AndroidManifest.xml
-
-        # 2) smali：重命名类目录 + 替换所有引用（Lcom/x/y 与字符串形式的 com.x.y）
-        shopt -s nullglob
-        for d in dec/smali dec/smali_classes*; do
-          [ -d "$d/$OLDP" ] || continue
-          mkdir -p "$d/$(dirname "$NEWP")"
-          mv "$d/$OLDP" "$d/$NEWP"
-        done
-        find dec -name '*.smali' -print0 | xargs -0 -r sed -i "s|L${OLDP}|L${NEWP}|g; s|${OLD}|${NEW}|g"
+        # 只改“应用 ID”（manifest 的 package 属性），不改类包名。
+        # 注意：类包名 / smali 一旦改动，native JNI 符号(Java_com_xxx_...)就对不上，
+        # 会抛 UnsatisfiedLinkError 并闪退（已实测）。所以这里只改 package。
+        sed -i "s|package=\"$OLD\"|package=\"$NEW\"|" dec/AndroidManifest.xml
 
         java -jar tools/apktool.jar b dec -o unsigned.apk >/dev/null
         ls -la unsigned.apk
