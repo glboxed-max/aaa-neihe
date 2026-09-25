@@ -133,7 +133,7 @@ runs:
         rm -rf signed && mkdir -p signed
         java -jar tools/uber-apk-signer.jar --apks unsigned.apk \
           --ks ks.jks --ksAlias k --ksPass "$PASS" --ksKeyPass "$PASS" \
-          --out signed --overwrite >/dev/null
+          --out signed >/dev/null
 
         SIGNED="$(find signed -name '*.apk' | head -n1)"
         [ -n "$SIGNED" ] || { echo "::error::签名失败"; exit 1; }
