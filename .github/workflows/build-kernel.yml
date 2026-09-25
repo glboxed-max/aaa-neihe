@@ -926,6 +926,15 @@ jobs:
           done < <(find "$KERNEL_ROOT" -type f -name '*.rej' 2>/dev/null || true)
           echo "发现 $REJ_COUNT 个 .rej 文件"
 
+      - name: 上传管理器 APK（单独产物，便于下载）
+        if: inputs.upload_manager && inputs.ksu_variant != 'None' && env.MANAGER_APK != ''
+        uses: actions/upload-artifact@v4
+        with:
+          name: manager-${{ inputs.ksu_variant }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ steps.resolve.outputs.sub_level }}
+          path: manager/*.apk
+          if-no-files-found: warn
+          retention-days: 7
+
       - name: 生成版本锁 / BUILD_INFO / SHA256SUMS
         if: always()
         shell: bash
