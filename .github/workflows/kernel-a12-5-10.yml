@@ -1,0 +1,200 @@
+﻿name: 内核构建 - Android 12 (5.10)
+
+# ============================================================
+#  Android 12 / 内核 5.10 专用入口（仿 ABK 的单版本工作流）
+#  运行表单里只显示选项，内核版本已固定；子版本默认构建全部。
+#  每个子版本调用可复用工作流 build-kernel.yml。
+# ============================================================
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      # ==================== 子版本 ====================
+      sub_version_mode:
+        description: "子版本"
+        required: true
+        type: choice
+        options:
+          - "全部子版本"
+          - "最新子版本"
+        default: "全部子版本"
+
+      # ==================== KernelSU / 管理器 ====================
+      ksu_variant:
+        description: "KSU 变体"
+        required: true
+        type: choice
+        options: [SukiSU, Official, ReSukiSU, Next, None]
+        default: SukiSU
+      ksu_branch:
+        description: "KSU 分支"
+        required: true
+        type: choice
+        options: ["Stable(标准)", "Dev(开发)", "Latest(最新)", "Other(其他/指定)"]
+        default: "Stable(标准)"
+      custom_ref:
+        description: "自定义管理器 分支/Tag（配合“其他/指定”）"
+        required: false
+        type: string
+        default: ""
+      ksu_version:
+        description: "强制指定 KSU_VERSION（如 13000）"
+        required: false
+        type: string
+        default: ""
+
+      # ==================== 功能开关 ====================
+      use_susfs:
+        description: "启用 SUSFS"
+        required: false
+        type: boolean
+        default: true
+      susfs_commit:
+        description: "SUSFS 固定提交（留空=默认 pin）"
+        required: false
+        type: string
+        default: ""
+      use_zram:
+        description: "启用 ZRAM 增强算法"
+        required: false
+        type: boolean
+        default: true
+      zram_full_algo:
+        description: "启用 ZRAM 完整算法支持"
+        required: false
+        type: boolean
+        default: false
+      use_bbg:
+        description: "启用 BBG 防格机"
+        required: false
+        type: boolean
+        default: true
+      use_ddk:
+        description: "启用 DDK 防格机 LSM"
+        required: false
+        type: boolean
+        default: false
+      use_ntsync:
+        description: "启用 NTsync"
+        required: false
+        type: boolean
+        default: true
+      use_networking:
+        description: "启用网络增强（IPSet + BBR）"
+        required: false
+        type: boolean
+        default: true
+      use_kpm:
+        description: "启用 KPM 功能"
+        required: false
+        type: boolean
+        default: false
+      kpm_password:
+        description: "KPM 超级密码（留空=默认）"
+        required: false
+        type: string
+        default: ""
+      use_rekernel:
+        description: "启用 Re-Kernel 驱动"
+        required: false
+        type: boolean
+        default: false
+
+      # ==================== 高级 ====================
+      version:
+        description: "自定义内核后缀（留空=随机）"
+        required: false
+        type: string
+        default: ""
+      build_time:
+        description: "自定义构建时间（留空=当前 UTC）"
+        required: false
+        type: string
+        default: ""
+      custom_kernel_options:
+        description: "自定义内核选项（每行一条）"
+        required: false
+        type: string
+        default: ""
+      upload_manager:
+        description: "上传对应版本管理器 APK"
+        required: false
+        type: boolean
+        default: true
+      publish_release:
+        description: "构建完成后发布到 Releases"
+        required: false
+        type: boolean
+        default: false
+
+jobs:
+  prepare:
+    name: "生成子版本矩阵"
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.gen.outputs.matrix }}
+      count: ${{ steps.gen.outputs.count }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: gen
+        shell: bash
+        run: |
+          set -euo pipefail
+          MODE="${{ inputs.sub_version_mode }}"
+          TABLE="$GITHUB_WORKSPACE/.github/matrix/versions.tsv"
+          SEL="$(grep -vE '^[[:space:]]*(#|$)' "$TABLE" | awk -F'|' '$1=="android12" && $2=="5.10" {print}')"
+          if [ "$MODE" = "全部子版本" ]; then
+            ROWS="$SEL"
+          else
+            ROWS="$(printf '%s\n' "$SEL" | awk -F'|' '$3 ~ /^[0-9]+$/' | sort -t'|' -k3,3n | tail -n1)"
+          fi
+          JSON="[]"
+          while IFS='|' read -r A K S P R; do
+            [ -z "$A" ] && continue
+            [ -z "$R" ] && R=r1
+            JSON=$(echo "$JSON" | jq -c --arg a "$A" --arg k "$K" --arg s "$S" --arg p "$P" --arg r "$R" \
+              '. + [{"android_version":$a,"kernel_version":$k,"sub_level":$s,"os_patch_level":$p,"revision":$r}]')
+          done <<< "$ROWS"
+          echo "matrix=$JSON" >> "$GITHUB_OUTPUT"
+          echo "count=$(echo "$JSON" | jq 'length')" >> "$GITHUB_OUTPUT"
+          echo "Android 12 / 5.10 子版本=$MODE -> 目标数=$(echo "$JSON" | jq 'length')"
+
+  build:
+    name: "5.10.${{ matrix.t.sub_level }}"
+    needs: prepare
+    if: needs.prepare.outputs.count != '0'
+    strategy:
+      fail-fast: false
+      matrix:
+        t: ${{ fromJson(needs.prepare.outputs.matrix) }}
+    uses: ./.github/workflows/build-kernel.yml
+    secrets: inherit
+    with:
+      android_version: "${{ matrix.t.android_version }}"
+      kernel_version: "${{ matrix.t.kernel_version }}"
+      sub_level: ${{ matrix.t.sub_level }}
+      os_patch_level: ${{ matrix.t.os_patch_level }}
+      revision: ${{ matrix.t.revision }}
+      ksu_variant: ${{ inputs.ksu_variant }}
+      ksu_branch: ${{ inputs.ksu_branch }}
+      custom_ref: ${{ inputs.custom_ref }}
+      ksu_version: ${{ inputs.ksu_version }}
+      use_susfs: ${{ inputs.use_susfs }}
+      susfs_commit: ${{ inputs.susfs_commit }}
+      use_zram: ${{ inputs.use_zram }}
+      zram_full_algo: ${{ inputs.zram_full_algo }}
+      use_bbg: ${{ inputs.use_bbg }}
+      use_ddk: ${{ inputs.use_ddk }}
+      use_ntsync: ${{ inputs.use_ntsync }}
+      use_networking: ${{ inputs.use_networking }}
+      use_kpm: ${{ inputs.use_kpm }}
+      kpm_password: ${{ inputs.kpm_password }}
+      use_rekernel: ${{ inputs.use_rekernel }}
+      version: ${{ inputs.version }}
+      build_time: ${{ inputs.build_time }}
+      custom_kernel_options: ${{ inputs.custom_kernel_options }}
+      upload_manager: ${{ inputs.upload_manager }}
+      publish_release: ${{ inputs.publish_release }}

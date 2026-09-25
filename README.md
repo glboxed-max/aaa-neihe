@@ -28,10 +28,15 @@ Android GKI 内核自动化构建（GitHub Actions）。基于 [jiuxiao226/Kerne
 ├─ nongki/
 │  └─ legacy_ksu_hooks.sh      # 4.x/5.4 手动 hook 补丁（KernelSU 上游）
 └─ workflows/
-   ├─ build-kernel.yml          # GKI 构建入口（workflow_dispatch / workflow_call）
-   ├─ matrix-build.yml          # GKI 矩阵构建入口
-   ├─ non-gki-build.yml         # 非 GKI（4.x / 5.4）构建入口（可复用 workflow_call）
-   └─ non-gki-matrix.yml        # 非 GKI 批量构建入口
+   ├─ build-kernel.yml          # GKI 可复用构建（被各入口调用）
+   ├─ kernel-a12-5-10.yml       # 单版本入口：Android 12 / 5.10
+   ├─ kernel-a13-5-15.yml       # 单版本入口：Android 13 / 5.15
+   ├─ kernel-a14-6-1.yml        # 单版本入口：Android 14 / 6.1
+   ├─ kernel-a15-6-6.yml        # 单版本入口：Android 15 / 6.6
+   ├─ kernel-a16-6-12.yml       # 单版本入口：Android 16 / 6.12
+   ├─ matrix-build.yml          # 批量入口（全部/5系列/6系列）
+   ├─ manager-repack.yml        # 管理器重打包测试
+   └─ non-gki-build.yml / non-gki-matrix.yml   # 非 GKI（4.x / 5.4）
 ```
 
 ---
@@ -111,6 +116,21 @@ Android GKI 内核自动化构建（GitHub Actions）。基于 [jiuxiao226/Kerne
 - 若源码支持 `KSU_MANAGER_PACKAGE`，同时把期望包名设为 `MANAGER_PACKAGE`。
 
 > 单独测试重打包：工作流 **`管理器重打包（改包名）`**（`.github/workflows/manager-repack.yml`）。
+
+## 单版本入口（仿 ABK）
+
+每个 Android 版本一个入口工作流，运行表单里只显示选项（内核版本已固定），子版本默认**全部**：
+
+| 工作流 | 对应 |
+|---|---|
+| `内核构建 - Android 12 (5.10)` | Android 12 / 5.10 |
+| `内核构建 - Android 13 (5.15)` | Android 13 / 5.15 |
+| `内核构建 - Android 14 (6.1)` | Android 14 / 6.1 |
+| `内核构建 - Android 15 (6.6)` | Android 15 / 6.6 |
+| `内核构建 - Android 16 (6.12)` | Android 16 / 6.12 |
+
+- 选 `全部子版本`（默认）→ 构建该版本的所有子版本；选 `最新子版本` → 只建最新一档。
+- 其余（KSU 变体/分支、SUSFS、ZRAM、BBG、DDK、NTsync、网络增强、KPM、Re-Kernel、管理器、发布）都是表单里的开关。
 
 ---
 
