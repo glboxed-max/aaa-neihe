@@ -111,17 +111,21 @@ jobs:
       - name: 安装 Gradle 缓存
         uses: gradle/actions/setup-gradle@v4
 
-      - name: 安装 Android SDK
-        uses: android-actions/setup-android@v3
-
-      - name: 安装平台 / build-tools / NDK
+      - name: 准备 Android SDK（接受许可；缺失组件交给 AGP 自动下载）
         shell: bash
+        # 说明：GitHub runner 自带 Android SDK 且已预接受许可，缺的 platform/build-tools/NDK 由 AGP 自动下载。
+        # 不用 android-actions/setup-android —— 它在新版 SDK 上执行 `sdkmanager tools` 会失败（实测）。
         run: |
           set -euo pipefail
-          yes | sdkmanager --licenses >/dev/null 2>&1 || true
-          # 具体版本以 KSU 源码 manager/build.gradle.kts 为准；装不上就交给 AGP 自动下载
-          sdkmanager "platform-tools" "platforms;android-37" "build-tools;37.0.0" "ndk;29.0.14206865" \
-            >/dev/null 2>&1 || echo "::warning::部分 SDK 组件未预装，交给 AGP 自动下载"
+          SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
+          echo "ANDROID_HOME=$SDK"
+          if [ -n "$SDK" ]; then
+            for SDKM in "$SDK/cmdline-tools/latest/bin/sdkmanager" "$SDK/cmdline-tools/16.0/bin/sdkmanager"; do
+              if [ -x "$SDKM" ]; then yes | "$SDKM" --licenses >/dev/null 2>&1 || true; break; fi
+            done
+            echo "platforms:";   ls "$SDK/platforms"   2>/dev/null || true
+            echo "build-tools:"; ls "$SDK/build-tools" 2>/dev/null || true
+          fi
 
       - name: 安装 NDK r29（供 ksud 交叉编译）
         if: inputs.build_ksud

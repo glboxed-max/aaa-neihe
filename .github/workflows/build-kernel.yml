@@ -34,11 +34,6 @@ on:
         required: false
         type: string
         default: ""
-      revision:
-        description: "Android 12 GKI 修订号（如 r1，仅 android12 用）"
-        required: false
-        type: string
-        default: "r1"
 
       # ==================== KernelSU / 管理器 ====================
       ksu_variant:
@@ -70,11 +65,6 @@ on:
         required: true
         type: boolean
         default: true
-      susfs_commit:
-        description: "SUSFS 固定提交（留空=使用经过验证的默认 pin；填 -1 可关闭 SUSFS）"
-        required: false
-        type: string
-        default: ""
       use_zram:
         description: "启用 ZRAM 增强算法"
         required: true
@@ -110,11 +100,6 @@ on:
         required: true
         type: boolean
         default: false
-      kpm_password:
-        description: "自定义 KPM 超级密码（留空=默认）"
-        required: false
-        type: string
-        default: ""
       use_rekernel:
         description: "启用 Re-Kernel 驱动"
         required: false
@@ -149,21 +134,8 @@ on:
         default: false
 
       # ==================== 高级配置 ====================
-      version:
-        description: "自定义内核版本字符串（留空则自动生成）"
-        required: false
-        type: string
-        default: ""
-      build_time:
-        description: "构建时间（留空则用当前 UTC）"
-        required: false
-        type: string
-        default: ""
-      custom_kernel_options:
-        description: "自定义内核选项（每行一条 Kconfig/defconfig 片段）"
-        required: false
-        type: string
-        default: ""
+      # 注：version / build_time / custom_kernel_options 仅经 workflow_call 传入
+      #     （workflow_dispatch 最多 25 个输入，这里省略以腾出配额）
       publish_release:
         description: "构建完成后发布到 Releases"
         required: false
@@ -994,7 +966,7 @@ jobs:
         run: |
           set -euo pipefail
           cd bootimgs
-          GKI_URL="https://dl.google.com/android/gki/gki-certified-boot-android12-5.10-${{ steps.resolve.outputs.os_patch_level }}_${{ inputs.revision }}.zip"
+          GKI_URL="https://dl.google.com/android/gki/gki-certified-boot-android12-5.10-${{ steps.resolve.outputs.os_patch_level }}_${{ inputs.revision || 'r1' }}.zip"
           FALLBACK_URL="https://dl.google.com/android/gki/gki-certified-boot-android12-5.10-2023-01_r1.zip"
           if [ "$(curl -sL -w '%{http_code}' "$GKI_URL" -o /dev/null)" = "200" ]; then
             curl -Lo gki-kernel.zip "$GKI_URL"
