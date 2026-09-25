@@ -46,7 +46,7 @@ def get_sign(path):
         if pos < 0:
             break
         if u16(data, pos) == i:
-            magic_pos = pos - 22
+            magic_pos = pos - 20
             if magic_pos >= 0 and u32(data, magic_pos) == EOCD_MAGIC:
                 eocd = magic_pos
                 break
