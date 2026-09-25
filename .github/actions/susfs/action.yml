@@ -170,6 +170,14 @@ runs:
           [ -n "$f" ] && ensure_susfs_include "$f"
         done < <(grep -rlE 'susfs_is_current_ksu_domain|DEFAULT_KSU_MNT_ID|DEFAULT_KSU_MNT_GROUP_ID|susfs_is_sdcard_android_data_not_decrypted|VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT|susfs_is_current_proc_umounted_for_zygote_next|CL_COPY_MNT_NS' --include='*.c' . 2>/dev/null || true)
 
+        # fs/namespace.c：其头部 hunk 常失配，导致以下声明缺失（补丁里本应加上）
+        if [ -f fs/namespace.c ] && ! grep -qF '#define CL_COPY_MNT_NS' fs/namespace.c; then
+          if grep -qE 'susfs_is_current_ksu_domain|susfs_is_sdcard_android_data_not_decrypted|CL_COPY_MNT_NS' fs/namespace.c; then
+            awk '{ a[NR]=$0 } /^#include/ { last=NR } END { for (i=1;i<=NR;i++){ print a[i]; if(i==last){ print ""; print "/* SUSFS compat (auto-injected) */"; print "extern bool susfs_is_current_ksu_domain(void);"; print "extern struct static_key_true susfs_is_sdcard_android_data_not_decrypted;"; print "#ifndef CL_COPY_MNT_NS"; print "#define CL_COPY_MNT_NS BIT(25)"; print "#endif" } } }' fs/namespace.c > fs/namespace.c.susfs.tmp && mv fs/namespace.c.susfs.tmp fs/namespace.c
+            echo "已为 fs/namespace.c 补齐 SUSFS 声明"
+          fi
+        fi
+
     - name: Apply Unicode bypass fix
       shell: bash
       run: |
