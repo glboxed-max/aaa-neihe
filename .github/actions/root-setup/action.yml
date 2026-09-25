@@ -85,6 +85,21 @@ runs:
         variant="${{ inputs.variant }}"
         ref="$ROOT_REF"
 
+        # 校验 ref 是否存在：各变体的 setup.sh 遇到不存在的 ref 会“静默回退到默认分支”，
+        # 容易导致后续补丁链对不上（例如回退到不含 SUSFS 的分支）。这里提前失败并列出可用项。
+        case "$variant" in
+          "Official") REPO_URL="https://github.com/tiann/KernelSU" ;;
+          "SukiSU")   REPO_URL="https://github.com/SukiSU-Ultra/SukiSU-Ultra" ;;
+          "ReSukiSU") REPO_URL="https://github.com/ReSukiSU/ReSukiSU" ;;
+          "Next")     REPO_URL="https://github.com/KernelSU-Next/KernelSU-Next" ;;
+        esac
+        if ! git ls-remote --heads --tags "$REPO_URL" 2>/dev/null | grep -qE "refs/(heads|tags)/${ref}$"; then
+          echo "::error::ref '$ref' 在 $REPO_URL 中不存在。可用分支/标签（部分）："
+          git ls-remote --heads --tags "$REPO_URL" | awk '{print $2}' \
+            | sed 's#refs/heads/##; s#refs/tags/##' | grep -v '\^{}' | sort -u | head -40
+          exit 1
+        fi
+
         case "$variant" in
           "Official")
             echo "添加 KernelSU 官方版 (ref=$ref)..."

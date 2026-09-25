@@ -51,6 +51,14 @@ runs:
         cd "$KERNEL_ROOT/common"
         patch -p1 < "50_add_susfs_in_gki-${A}-${K}.patch" || true
 
+        # 早失败：若变体/分支其实不支持 SUSFS，CONFIG_KSU_SUSFS 不会被 Kconfig 声明；
+        # 继续下去会在编译的配置校验阶段报一堆 “actual ''” 的莫名错误。
+        if ! grep -rqE 'config[[:space:]]+KSU_SUSFS' --include=Kconfig . 2>/dev/null; then
+          echo "::error::SUSFS 未生效：CONFIG_KSU_SUSFS 未被 Kconfig 声明。"
+          echo "::error::常见原因：SukiSU 用了 main/dev（不内置 SUSFS）而非 builtin；或 SUSFS 补丁没打上。"
+          exit 1
+        fi
+
         # ---- 版本相关修复（base.c / namespace.c 等）----
         FIX_ROOT=""
         for d in "$KERNEL_PATCHES/wild/susfs_fix_patches/v${SUSFS_VERSION}" \
