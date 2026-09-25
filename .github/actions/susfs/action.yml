@@ -170,6 +170,13 @@ runs:
           [ -n "$f" ] && ensure_susfs_include "$f"
         done < <(grep -rlE 'susfs_is_current_ksu_domain|DEFAULT_KSU_MNT_ID|DEFAULT_KSU_MNT_GROUP_ID|susfs_is_sdcard_android_data_not_decrypted|VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT|susfs_is_current_proc_umounted_for_zygote_next|CL_COPY_MNT_NS' --include='*.c' . 2>/dev/null || true)
 
+        # 旧 GKI 分支没有 VMA_PAD_START（page-size-migration 特性较晚才加入），补官方同款 fallback 宏
+        if [ -f fs/proc/task_mmu.c ] && grep -q 'VMA_PAD_START(' fs/proc/task_mmu.c \
+           && ! grep -qE '#include <linux/pgsize_migration(_inline)?\.h>|define VMA_PAD_START' fs/proc/task_mmu.c; then
+          sed -i '1a #ifndef VMA_PAD_START\n#define VMA_PAD_START(vma) ((vma)->vm_end)\n#endif' fs/proc/task_mmu.c
+          echo "已为 fs/proc/task_mmu.c 补 VMA_PAD_START fallback"
+        fi
+
         # 说明：按 AGENTS.md，这里不做“强行兼容”的 shim。
         # 新版 SUSFS 若引用 KSU 新符号，应通过版本锁定（build-kernel.yml 里的 SUSFS 提交 pin）
         # 保证 SUSFS 与所选 KernelSU 变体匹配，而不是注入占位实现。
