@@ -1004,7 +1004,7 @@ jobs:
           path: |
             *AnyKernel3.zip
             *.img
-            manager/**
+            manager/*.apk
             VERSION_LOCK.md
             BUILD_INFO.txt
             SHA256SUMS
