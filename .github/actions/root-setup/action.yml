@@ -133,6 +133,7 @@ runs:
 
         KSU_LATEST_COMMIT_DATE="$(git -C KernelSU log -1 --date=format:'%Y-%m-%d %H:%M:%S %z' --format='%cd' 2>/dev/null || echo '未知')"
         echo "KSU_LATEST_COMMIT_DATE=$KSU_LATEST_COMMIT_DATE" >> "$GITHUB_ENV"
+        echo "KSU_COMMIT=$(git -C KernelSU rev-parse HEAD 2>/dev/null || echo unknown)" >> "$GITHUB_ENV"
         echo "KSU 最新提交: $KSU_LATEST_COMMIT_DATE"
 
     - name: Override KSU_VERSION

@@ -426,29 +426,40 @@ jobs:
           echo "克隆 AnyKernel3..."
           retry_clone https://github.com/osm0sis/AnyKernel3.git master AnyKernel3 || \
             retry_clone https://github.com/WildKernels/AnyKernel3.git gki-2.0 AnyKernel3
+          echo "ANYKERNEL_COMMIT=$(git -C AnyKernel3 rev-parse HEAD)" >> "$GITHUB_ENV"
           rm -rf AnyKernel3/.git
 
           if [ "${{ inputs.use_susfs }}" = "true" ]; then
             SUSFS_BRANCH="gki-${{ inputs.android_version }}-${{ inputs.kernel_version }}"
-            # 按变体选择配套的 SUSFS fork（官方做法：SukiSU 用 ShirkNeko 的 fork）
-            case "${{ inputs.ksu_variant }}" in
-              SukiSU|ReSukiSU) SUSFS_REPO="https://github.com/ShirkNeko/susfs4ksu.git" ;;
-              *)               SUSFS_REPO="https://gitlab.com/simonpunk/susfs4ksu.git" ;;
-            esac
-            echo "克隆 SUSFS ($SUSFS_REPO @ $SUSFS_BRANCH)..."
-            retry_clone "$SUSFS_REPO" "$SUSFS_BRANCH" susfs4ksu
+            echo "克隆 SUSFS (分支: $SUSFS_BRANCH)..."
+            retry_clone https://gitlab.com/simonpunk/susfs4ksu.git "$SUSFS_BRANCH" susfs4ksu
 
-            # 默认用分支 tip（新内核配新 SUSFS）；只有显式提供 susfs_commit 时才 pin
+            # 版本锁定：按内核版本固定到“与该 KernelSU 变体匹配、经过验证”的 SUSFS 提交。
+            # 不用浮动 branch（AGENTS.md 第 2 条）；可用 susfs_commit 覆盖，-1=强制分支 tip。
             PIN="${{ inputs.susfs_commit }}"
             if [ "$PIN" = "-1" ]; then
               echo "susfs_commit=-1：使用分支 tip"
-            elif [ -n "$PIN" ]; then
-              echo "按输入固定 SUSFS 到 $PIN"
+              PIN=""
+            elif [ -z "$PIN" ]; then
+              case "${{ inputs.android_version }}-${{ inputs.kernel_version }}" in
+                android12-5.10) PIN=ec785f47d49f7b3871ca9356f450411020af7017 ;;
+                android13-5.10) PIN=ed3d6d9c9a2652e1c70f153f5358701e996d646c ;;
+                android13-5.15) PIN=bca0d2333c1a7d717e7278b019d7af7ba1d16005 ;;
+                android14-5.15) PIN=d54b51724afa912c4c99bb99731354ce934d1889 ;;
+                android14-6.1)  PIN=4fc9c1898ea66f51847cdbc0d1473ea4ef525a70 ;;
+                android15-6.6)  PIN=937215cb3a1b1f333d764c366c7a49972fa8e7a0 ;;
+                android16-6.12) PIN=7d91da2d2ce056d1abf378d9199aaf1072d37ab0 ;;
+                *) PIN="" ;;
+              esac
+              [ -n "$PIN" ] && echo "版本锁定 SUSFS -> $PIN"
+            fi
+            if [ -n "$PIN" ]; then
               git -C susfs4ksu fetch --depth 1 origin "$PIN" 2>/dev/null || echo "::warning::SUSFS pin fetch 失败，沿用分支 tip"
               git -C susfs4ksu checkout --detach "$PIN" 2>/dev/null || echo "::warning::SUSFS pin checkout 失败，沿用分支 tip"
             fi
 
             echo "SUSFS_LATEST_COMMIT_DATE=$(git -C susfs4ksu log -1 --date=format:'%Y-%m-%d %H:%M:%S' --format='%cd')" >> "$GITHUB_ENV"
+            echo "SUSFS_COMMIT=$(git -C susfs4ksu rev-parse HEAD)" >> "$GITHUB_ENV"
           fi
 
           echo "克隆补丁资源..."
@@ -915,6 +926,34 @@ jobs:
           done < <(find "$KERNEL_ROOT" -type f -name '*.rej' 2>/dev/null || true)
           echo "发现 $REJ_COUNT 个 .rej 文件"
 
+      - name: 生成版本锁 / BUILD_INFO / SHA256SUMS
+        if: always()
+        shell: bash
+        run: |
+          {
+            echo "# VERSION_LOCK"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "|---|---|"
+            echo "| Android | ${{ inputs.android_version }} |"
+            echo "| Kernel | ${{ inputs.kernel_version }}.${{ steps.resolve.outputs.sub_level }} (${{ steps.resolve.outputs.os_patch_level }}) |"
+            echo "| KSU 变体 | ${{ inputs.ksu_variant }} |"
+            echo "| KSU 分支/ref | ${{ inputs.ksu_branch }} / ${{ inputs.custom_ref }} |"
+            echo "| KSU_VERSION 覆盖 | ${{ inputs.ksu_version }} |"
+            echo "| KernelSU commit | ${KSU_COMMIT:-未知} |"
+            echo "| SUSFS commit | ${SUSFS_COMMIT:-未启用} |"
+            echo "| AnyKernel3 commit | ${ANYKERNEL_COMMIT:-未知} |"
+            echo "| Manager 包名 | ${MANAGER_PACKAGE:-未改包名} |"
+            echo "| Manager size/hash | ${MANAGER_SIZE:-} ${MANAGER_HASH:-} |"
+            echo "| 功能 | susfs=${{ inputs.use_susfs }} zram=${{ inputs.use_zram }} bbg=${{ inputs.use_bbg }} ddk=${{ inputs.use_ddk }} ntsync=${{ inputs.use_ntsync }} net=${{ inputs.use_networking }} kpm=${{ inputs.use_kpm }} rekernel=${{ inputs.use_rekernel }} |"
+            echo "| 生成时间(UTC) | $(date -u +%Y-%m-%dT%H:%M:%SZ) |"
+          } > VERSION_LOCK.md
+          cp VERSION_LOCK.md BUILD_INFO.txt
+          sha256sum *AnyKernel3.zip *.img 2>/dev/null > SHA256SUMS || true
+          sha256sum manager/*.apk 2>/dev/null >> SHA256SUMS || true
+          echo "---- VERSION_LOCK.md ----"
+          cat VERSION_LOCK.md
+
       - name: 上传构建产物
         if: always()
         uses: actions/upload-artifact@v4
@@ -924,6 +963,9 @@ jobs:
             *AnyKernel3.zip
             *.img
             manager/**
+            VERSION_LOCK.md
+            BUILD_INFO.txt
+            SHA256SUMS
             patch-rejects/**
           retention-days: 7
           if-no-files-found: warn
