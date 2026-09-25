@@ -1,0 +1,12 @@
+{
+  "generated_at": "2026-09-25",
+  "note": "依赖版本锁定（pins）。由 .github/scripts/verify_pins.py 校验/更新；机制参考 WildKernels/GKI_KernelSU_SUSFS 的 .github/pins。构建时优先使用这里记录的 sha。",
+  "pins": {
+    "anykernel3":     { "repo": "WildKernels/AnyKernel3",             "ref": "gki-2.0", "sha": "e1e9dce98430c5c6f231f7094a8c7f4ecaf50948" },
+    "kernel_patches": { "repo": "WildKernels/kernel_patches",         "ref": "main",    "sha": "41ae18b35d20e0c6ac04116785a4a1089528ae94" },
+    "nomount":        { "repo": "maxsteeel/nomount",                  "ref": "dev",     "sha": "46b7d582eeef99ddbafb995f8aacf7389c9eeb4d" },
+    "droidspaces":    { "repo": "ravindu644/Droidspaces-OSS",         "ref": "main",    "sha": "cff50fa04d50472b607ba6822e8bf482b19cd427" },
+    "sukisu_builtin": { "repo": "SukiSU-Ultra/SukiSU-Ultra",          "ref": "builtin", "sha": "b20dee702035af09cb2ecb5f35443bbc1747f3e6" },
+    "abk":            { "repo": "xingguangcuican6666/ABK",            "ref": "main",    "sha": "70a3ca594e92fefcfc86e2a5d4184872697d3157" }
+  }
+}

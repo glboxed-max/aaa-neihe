@@ -350,16 +350,16 @@ jobs:
           K="${{ inputs.kernel_version }}"
           SUB="$IN_SUB_LEVEL"
           PATCH="$IN_OS_PATCH_LEVEL"
-          TABLE="$GITHUB_WORKSPACE/.github/matrix/versions.tsv"
+          source "$GITHUB_WORKSPACE/.github/scripts/matrix_config.sh"
 
           if [ -z "$SUB" ] || [ "$SUB" = "latest" ]; then
-            ROW="$(grep -E "^${A}\|${K}\|" "$TABLE" | awk -F'|' '$3 ~ /^[0-9]+$/' | sort -t'|' -k3,3n | tail -n1)"
-            [ -n "$ROW" ] || { echo "::error::versions.tsv 中没有 $A/$K 的可用子版本"; exit 1; }
-            SUB="$(echo "$ROW" | cut -d'|' -f3)"
-            [ -n "$PATCH" ] || PATCH="$(echo "$ROW" | cut -d'|' -f4)"
+            ROW="$(cfg_latest "$A" "$K")"
+            [ -n "$ROW" ] || { echo "::error::config/$A-$K.json 中没有可用子版本"; exit 1; }
+            SUB="$(echo "$ROW" | cut -d'|' -f1)"
+            [ -n "$PATCH" ] || PATCH="$(echo "$ROW" | cut -d'|' -f2)"
           fi
           if [ -z "$PATCH" ]; then
-            PATCH="$(grep -E "^${A}\|${K}\|" "$TABLE" | awk -F'|' -v s="$SUB" '$3==s{print $4; exit}')"
+            PATCH="$(cfg_patch "$A" "$K" "$SUB")"
           fi
           [ -n "$PATCH" ] || PATCH="lts"
           echo "sub_level=$SUB" >> "$GITHUB_OUTPUT"
@@ -462,6 +462,17 @@ jobs:
           echo "克隆 AnyKernel3（GKI 预配置版）..."
           retry_clone https://github.com/WildKernels/AnyKernel3.git gki-2.0 AnyKernel3 || \
             retry_clone https://github.com/osm0sis/AnyKernel3.git master AnyKernel3
+
+          # 版本锁定：若 pins 记录了 AnyKernel3 的 sha，则检出该 sha（否则用分支 tip）
+          PIN_AK3="$(jq -r '.pins.anykernel3.sha // empty' "$GITHUB_WORKSPACE/.github/pins/verified.json" 2>/dev/null || true)"
+          if [ -n "$PIN_AK3" ] && [ -d AnyKernel3/.git ]; then
+            if git -C AnyKernel3 fetch --depth 1 origin "$PIN_AK3" >/dev/null 2>&1 && git -C AnyKernel3 checkout -q "$PIN_AK3"; then
+              echo "AnyKernel3 已锁定到 pin: $PIN_AK3"
+            else
+              echo "::warning::AnyKernel3 pin $PIN_AK3 不可用，退回分支 tip"
+            fi
+          fi
+
           echo "ANYKERNEL_COMMIT=$(git -C AnyKernel3 rev-parse HEAD)" >> "$GITHUB_ENV"
           rm -rf AnyKernel3/.git
 
@@ -524,6 +535,17 @@ jobs:
           git clone --depth 1 https://github.com/WildKernels/kernel_patches.git kernel_patches \
             || git clone --depth 1 -b main https://github.com/WildKernels/kernel_patches.git kernel_patches \
             || { echo "::error::kernel_patches 克隆失败"; exit 1; }
+
+          # 版本锁定：若 pins 记录了 kernel_patches 的 sha，则检出该 sha
+          PIN_KP="$(jq -r '.pins.kernel_patches.sha // empty' "$GITHUB_WORKSPACE/.github/pins/verified.json" 2>/dev/null || true)"
+          if [ -n "$PIN_KP" ]; then
+            if git -C kernel_patches fetch --depth 1 origin "$PIN_KP" >/dev/null 2>&1 && git -C kernel_patches checkout -q "$PIN_KP"; then
+              echo "kernel_patches 已锁定到 pin: $PIN_KP"
+            else
+              echo "::warning::kernel_patches pin $PIN_KP 不可用，退回分支 tip"
+            fi
+          fi
+
           echo "kernel_patches commit: $(git -C kernel_patches rev-parse HEAD)"
 
       # ============================================================
@@ -831,6 +853,19 @@ jobs:
         uses: ./.github/actions/device-patches
         with:
           version: ${{ inputs.android_version }}-${{ inputs.kernel_version }}
+
+      - name: 编译 FUSE-BPF 用户态组件
+        if: contains(format(',{0},', inputs.extra_features), ',fuse_bpf,')
+        uses: ./.github/actions/fuse-bpf
+
+      - name: 上传 FUSE-BPF 产物
+        if: contains(format(',{0},', inputs.extra_features), ',fuse_bpf,')
+        uses: actions/upload-artifact@v4
+        with:
+          name: fuse-bpf-${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ steps.resolve.outputs.sub_level }}
+          path: artifacts/fuse-bpf/**
+          if-no-files-found: warn
+          retention-days: 7
 
       - name: 应用自定义内核选项
         if: inputs.custom_kernel_options != ''

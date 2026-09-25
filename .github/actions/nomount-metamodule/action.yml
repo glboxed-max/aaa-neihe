@@ -1,0 +1,72 @@
+# ===== 说明：编译 NoMount Metamodule（刷机模块） =====
+# 来源：WildKernels/GKI_KernelSU_SUSFS 的 actions/nomount-metamodule
+# 作用：按指定 commit 拉取 maxsteeel/nomount，用 Zig 交叉编译 nm 工具（arm64/arm），
+#       打包成可刷入的 Metamodule ZIP，并校验源码 commit 一致性。
+name: 编译 NoMount Metamodule
+description: 用 Zig 编译 NoMount 用户态 nm 工具并打包为可刷入模块（版本锁定到指定 commit）
+inputs:
+  commit:
+    description: NoMount 完整 40 位 commit SHA
+    required: true
+outputs:
+  module_path:
+    description: 生成的模块 ZIP 路径
+    value: ${{ steps.package.outputs.module_path }}
+  commit:
+    description: 校验通过的 NoMount 源码 commit
+    value: ${{ steps.package.outputs.commit }}
+
+runs:
+  using: composite
+  steps:
+    - name: 准备 Zig
+      uses: jetsung/setup-zig@v0.0.4
+      with:
+        version: master
+
+    - name: 编译并打包 Metamodule
+      id: package
+      shell: bash
+      run: |
+        set -euo pipefail
+
+        EXPECTED="${{ inputs.commit }}"
+        [[ "$EXPECTED" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::NoMount commit 需为完整 40 位 SHA"; exit 2; }
+
+        SRC="${RUNNER_TEMP}/nomount-module-source"
+        MOD="${RUNNER_TEMP}/nomount-metamodule"
+        ZIP="${RUNNER_TEMP}/NoMount-${EXPECTED}.zip"
+
+        git clone --no-checkout https://github.com/maxsteeel/nomount.git "$SRC"
+        git -C "$SRC" fetch --depth=1 origin "$EXPECTED"
+        git -C "$SRC" checkout --detach "$EXPECTED"
+        ACTUAL="$(git -C "$SRC" rev-parse HEAD)"
+        [ "$ACTUAL" = "$EXPECTED" ] || { echo "::error::NoMount 源码 commit 不一致: 期望 $EXPECTED 实际 $ACTUAL"; exit 1; }
+
+        # 用 Zig 交叉编译 nm（静态、无 libc）
+        mkdir -p "$SRC/bin"
+        (
+          cd "$SRC/userspace/src"
+          zig cc -target aarch64-linux -Oz -mcmodel=tiny -static -nostdlib \
+            -ffreestanding -fno-unwind-tables -fno-ident -Wno-invalid-noreturn \
+            -Wl,--entry=_start nm.c -o ../../bin/nm-arm64
+          zig cc -target arm-linux -Oz -static -nostdlib -ffreestanding \
+            -fno-unwind-tables -fno-ident -Wno-invalid-noreturn \
+            -ffunction-sections -fdata-sections -Wl,--gc-sections \
+            -Wl,--entry=_start nm.c -o ../../bin/nm-arm
+        )
+
+        cp -a "$SRC/module" "$MOD"
+        mkdir -p "$MOD/bin"
+        install -m 0755 "$SRC/bin/nm-arm64" "$MOD/bin/nm-arm64"
+        install -m 0755 "$SRC/bin/nm-arm"   "$MOD/bin/nm-arm"
+        sed -i "s/^versionCode=.*/versionCode=1/" "$MOD/module.prop"
+        printf '%s\n' "$ACTUAL" > "$MOD/NOMOUNT_SOURCE_COMMIT"
+        ( cd "$MOD" && zip -qr "$ZIP" . )
+        sha256sum "$ZIP" > "${ZIP}.sha256"
+
+        {
+          echo "module_path=$ZIP"
+          echo "commit=$ACTUAL"
+        } >> "$GITHUB_OUTPUT"
+        echo "✅ 已生成 Metamodule: $ZIP"

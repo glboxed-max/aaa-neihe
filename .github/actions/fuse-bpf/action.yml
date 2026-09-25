@@ -1,0 +1,110 @@
+# ===== 说明：编译 FUSE-BPF 用户态组件 =====
+# 来源：WildKernels/GKI_KernelSU_SUSFS 的 actions/fuse-bpf
+# 作用：从内核 selftests 编译 FUSE-BPF 的 BPF 字节码与用户态守护进程（best-effort），
+#       产物落到 artifacts/fuse-bpf/，由 workflow 上传为单独 artifact。
+# 说明：该组件为可选辅助工具，允许部分步骤失败（不阻塞内核构建）。
+name: 编译 FUSE-BPF 用户态组件
+description: 从内核 selftests 编译 FUSE-BPF 的 BPF 对象与守护进程（best-effort）
+
+runs:
+  using: composite
+  steps:
+    - name: 安装构建依赖
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get update -qq || true
+        sudo apt-get install -y -qq clang llvm binutils-aarch64-linux-gnu \
+          libelf-dev gcc-aarch64-linux-gnu elfutils || true
+
+    - name: 生成 UAPI / arch 头文件桩
+      shell: bash
+      run: |
+        set -euo pipefail
+        GEN_DIR="$(mktemp -d)"
+        echo "GENERATED_HDR_DIR=${GEN_DIR}" >> "$GITHUB_ENV"
+        KSRC="${{ env.KERNEL_ROOT }}/common"
+
+        mkdir -p "$GEN_DIR/usr/include/asm"
+        for name in errno byteorder socket siginfo unistd ioctls termbits termios \
+                    fcntl param resource stat statfs signal types posix_types auxvec bitsperlong; do
+          printf '%s\n' "#include <asm-generic/${name}.h>" > "$GEN_DIR/usr/include/asm/${name}.h"
+        done
+        printf '%s\n' '#define __BITS_PER_LONG 64' > "$GEN_DIR/usr/include/asm/bitsperlong.h"
+        printf '%s\n' \
+          'typedef unsigned char uint8_t;' 'typedef unsigned short uint16_t;' \
+          'typedef unsigned int uint32_t;' 'typedef unsigned long long uint64_t;' \
+          'typedef signed char int8_t;' 'typedef signed short int16_t;' \
+          'typedef signed int int32_t;' 'typedef signed long long int64_t;' \
+          'typedef __SIZE_TYPE__ size_t;' 'typedef __PTRDIFF_TYPE__ ptrdiff_t;' \
+          > "$GEN_DIR/usr/include/types_override.h"
+        for d in asm-generic linux mtd rdma sound video; do
+          [ -d "$KSRC/include/uapi/$d" ] && ln -sfn "$KSRC/include/uapi/$d" "$GEN_DIR/usr/include/$d"
+        done
+        echo "头文件桩就绪"
+
+    - name: 编译 fd_bpf.bpf（BPF 字节码）
+      shell: bash
+      run: |
+        set -euo pipefail
+        FUSE_DIR="${{ env.KERNEL_ROOT }}/common/tools/testing/selftests/filesystems/fuse"
+        [ -d "$FUSE_DIR" ] || { echo "::warning::未找到 FUSE selftests 目录，跳过"; exit 0; }
+        cd "$FUSE_DIR"
+
+        CC="clang"; command -v aarch64-linux-gnu-clang >/dev/null && CC="aarch64-linux-gnu-clang"
+        KSRC="${{ env.KERNEL_ROOT }}/common"
+        $CC -target bpf -include "$GENERATED_HDR_DIR/usr/include/types_override.h" \
+          -D__TARGET_ARCH_arm64 -I "$GENERATED_HDR_DIR/usr/include" \
+          -idirafter "$KSRC/arch/arm64/include/generated/uapi" \
+          -idirafter "$KSRC/arch/arm64/include/generated" \
+          -idirafter "$KSRC/include/generated/uapi" -idirafter "$KSRC/include/generated" \
+          -idirafter "$KSRC/arch/arm64/include/uapi" -idirafter "$KSRC/include/uapi" \
+          -idirafter "$KSRC/arch/arm64/include" -idirafter "$KSRC/include" \
+          -Wall -O2 -g -emit-llvm -c fd_bpf.c -o fd_bpf.ir || { echo "::warning::fd_bpf 编译失败"; exit 0; }
+        if command -v llc >/dev/null 2>&1; then
+          llc -march=bpf -filetype=obj -o fd_bpf.bpf fd_bpf.ir || true
+        else
+          $CC -target bpf -I "$GENERATED_HDR_DIR/usr/include" -Wall -O2 -g -c fd_bpf.c -o fd_bpf.bpf || true
+        fi
+        ls -la fd_bpf.bpf 2>/dev/null || echo "::warning::未生成 fd_bpf.bpf"
+
+    - name: 编译用户态守护进程（best-effort）
+      shell: bash
+      run: |
+        set -euo pipefail
+        FUSE_DIR="${{ env.KERNEL_ROOT }}/common/tools/testing/selftests/filesystems/fuse"
+        [ -d "$FUSE_DIR" ] || exit 0
+        cd "$FUSE_DIR"
+        CC="cc"
+        command -v aarch64-linux-android34-clang >/dev/null && CC="aarch64-linux-android34-clang"
+        command -v aarch64-linux-gnu-clang  >/dev/null && CC="aarch64-linux-gnu-clang"
+        command -v aarch64-linux-gnu-gcc    >/dev/null && CC="aarch64-linux-gnu-gcc"
+        $CC -target aarch64-linux-android -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE -D__KERNEL__ -D__EXPORTED_HEADERS__ \
+          -I "$GENERATED_HDR_DIR/usr/include" \
+          -I "${{ env.KERNEL_ROOT }}/common/include/uapi" \
+          -I "${{ env.KERNEL_ROOT }}/common/include" \
+          -I "${{ env.KERNEL_ROOT }}/common/arch/arm64/include" \
+          -I "${{ env.KERNEL_ROOT }}/common/arch/arm64/include/uapi" \
+          -I "${{ env.KERNEL_ROOT }}/common/tools/testing/selftests" \
+          -Wall -c fuse_daemon.c -o fuse_daemon.o 2>&1 || true
+        $CC -target aarch64-linux-android -D_FILE_OFFSET_BITS=64 -D_GNU_SOURCE -D__KERNEL__ -D__EXPORTED_HEADERS__ \
+          -I "$GENERATED_HDR_DIR/usr/include" \
+          -I "${{ env.KERNEL_ROOT }}/common/include/uapi" \
+          -I "${{ env.KERNEL_ROOT }}/common/include" \
+          -I "${{ env.KERNEL_ROOT }}/common/arch/arm64/include" \
+          -I "${{ env.KERNEL_ROOT }}/common/arch/arm64/include/uapi" \
+          -I "${{ env.KERNEL_ROOT }}/common/tools/testing/selftests" \
+          -Wall -c bpf_loader.c -o bpf_loader.o 2>&1 || true
+        $CC fuse_daemon.o bpf_loader.o -lelf -lpthread -o fuse-daemon-arm64 2>&1 || echo "::warning::守护进程链接失败（可忽略）"
+        ls -la fuse-daemon-arm64 2>/dev/null || echo "未生成 fuse-daemon-arm64"
+
+    - name: 收集 FUSE-BPF 产物
+      shell: bash
+      run: |
+        set -euo pipefail
+        OUT="${{ github.workspace }}/artifacts/fuse-bpf"
+        mkdir -p "$OUT"
+        FUSE_DIR="${{ env.KERNEL_ROOT }}/common/tools/testing/selftests/filesystems/fuse"
+        [ -f "$FUSE_DIR/fd_bpf.bpf" ]        && cp "$FUSE_DIR/fd_bpf.bpf" "$OUT/" || true
+        [ -f "$FUSE_DIR/fuse-daemon-arm64" ] && cp "$FUSE_DIR/fuse-daemon-arm64" "$OUT/" || true
+        ls -la "$OUT" || true

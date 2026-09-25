@@ -144,8 +144,8 @@ jobs:
         run: |
           set -euo pipefail
           MODE="${{ inputs.sub_version_mode }}"
-          TABLE="$GITHUB_WORKSPACE/.github/matrix/versions.tsv"
-          SEL="$(grep -vE '^[[:space:]]*(#|$)' "$TABLE" | awk -F'|' '$1=="android14" && $2=="6.1" {print}')"
+          source "$GITHUB_WORKSPACE/.github/scripts/matrix_config.sh"
+          SEL="$(cfg_rows "android14" "6.1")"
           if [ "$MODE" = "全部子版本" ]; then
             ROWS="$SEL"
           else

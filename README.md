@@ -22,8 +22,10 @@ Android GKI 内核自动化构建（GitHub Actions）。基于 [jiuxiao226/Kerne
 │  ├─ networking/               # 网络增强（IPSet + BBR）
 │  ├─ rekernel/                 # Re-Kernel 驱动
 │  └─ kpm/                      # KPM 镜像补丁（编译后）
+├─ config/                     # GKI 矩阵配置：<android>-<kernel>.json（sublevel/date/revision）
+├─ pins/
+│  └─ verified.json            # 依赖版本锁定（sha），由 verify_pins.py 校验/更新
 ├─ matrix/
-│  ├─ versions.tsv             # GKI 矩阵版本表（android|kernel|sub|patch|revision）
 │  └─ nongki.tsv               # 非 GKI 批量 profile 表（name|series|arch|source|branch|defconfig|image）
 ├─ nongki/
 │  └─ legacy_ksu_hooks.sh      # 4.x/5.4 手动 hook 补丁（KernelSU 上游）
@@ -136,7 +138,7 @@ Android GKI 内核自动化构建（GitHub Actions）。基于 [jiuxiao226/Kerne
 
 ## 矩阵构建
 
-工作流 **`批量内核构建`**（`.github/workflows/matrix-build.yml`）可按范围一次扇出多个内核构建。版本表在 **`.github/matrix/versions.tsv`**。
+工作流 **`批量内核构建`**（`.github/workflows/matrix-build.yml`）可按范围一次扇出多个内核构建。版本表在 **`.github/config/<android>-<kernel>.json`**（由 `.github/scripts/matrix_config.sh` 读取）。
 
 ### 范围选择
 | 输入 | 说明 |
@@ -157,8 +159,12 @@ Android GKI 内核自动化构建（GitHub Actions）。基于 [jiuxiao226/Kerne
 
 > 不再需要另填 `android/kernel/sub` 等字段——选了 `kernel_scope` 就决定了构建哪些。
 
-### 版本表（`versions.tsv`）
-格式：`android|kernel|sub_level|os_patch_level|revision`，`#` 开头为注释，`X|lts` 表示 lts 分支（“最新子版本”模式自动忽略）。当前收录：
+### 版本表（config JSON）
+每个组合一个文件 `.github/config/<android>-<kernel>.json`，格式：
+```json
+{ "version": "android14-6.1", "include": [ { "sublevel": "172", "date": "2026-06" }, ... ] }
+```
+`sublevel=X` 表示 lts 分支（“最新子版本”模式自动忽略）；可选的 `revision` 供 Android 12 构建 boot 镜像使用。当前收录：
 
 | 组合 | 档数 | 最新一档 |
 |---|---|---|

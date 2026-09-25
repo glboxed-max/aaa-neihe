@@ -1,0 +1,74 @@
+# ===== 说明：构建并发布 NoMount Metamodule =====
+# 来源：WildKernels/GKI_KernelSU_SUSFS 的 main.yml「build-nomount-module」作业
+# 用途：单独构建 NoMount 刷机模块（与内核侧 NoMount 集成使用同一 commit），产物发 Release。
+name: NoMount Metamodule
+
+on:
+  workflow_dispatch:
+    inputs:
+      commit:
+        description: "NoMount 完整 commit SHA（留空=dev 分支最新）"
+        required: false
+        type: string
+        default: ""
+      publish_release:
+        description: "发布到 Releases"
+        required: false
+        type: boolean
+        default: true
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: 构建 NoMount Metamodule
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 解析 NoMount commit
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          REF="${{ inputs.commit }}"
+          if [ -z "$REF" ]; then
+            REF="$(git ls-remote https://github.com/maxsteeel/nomount.git refs/heads/dev | awk '{print $1}')"
+            echo "未指定 commit，使用 dev 最新: $REF"
+          fi
+          echo "commit=$REF" >> "$GITHUB_OUTPUT"
+
+      - name: 编译 Metamodule
+        id: mod
+        uses: ./.github/actions/nomount-metamodule
+        with:
+          commit: ${{ steps.resolve.outputs.commit }}
+
+      - name: 上传产物
+        uses: actions/upload-artifact@v4
+        with:
+          name: NoMount-Metamodule
+          path: |
+            ${{ steps.mod.outputs.module_path }}
+            ${{ steps.mod.outputs.module_path }}.sha256
+          if-no-files-found: warn
+          retention-days: 30
+
+      - name: 发布到 Releases
+        if: inputs.publish_release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          SHORT="$(printf '%.12s' "${{ steps.mod.outputs.commit }}")"
+          TAG="nomount-module-$SHORT"
+          gh release view "$TAG" >/dev/null 2>&1 && gh release delete "$TAG" --yes --cleanup-tag || true
+          gh release create "$TAG" \
+            "${{ steps.mod.outputs.module_path }}" \
+            "${{ steps.mod.outputs.module_path }}.sha256" \
+            --title "NoMount Metamodule ($SHORT)" \
+            --notes "NoMount 刷机模块，源码 commit: ${{ steps.mod.outputs.commit }}"
+          echo "已发布 Release: $TAG"

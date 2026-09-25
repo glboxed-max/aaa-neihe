@@ -1,0 +1,52 @@
+# ===== 说明：定期校验依赖 pins（版本锁定） =====
+# 来源：WildKernels/GKI_KernelSU_SUSFS 的 pins 机制
+# 用途：校验 .github/pins/verified.json 中的 sha 是否仍有效，报告分支漂移；
+#       update=true 时把 pins 刷新到分支最新并提交。
+name: 校验依赖 pins
+
+on:
+  workflow_dispatch:
+    inputs:
+      update:
+        description: "是否把 pins 刷新为分支最新并提交"
+        required: false
+        type: boolean
+        default: false
+  schedule:
+    - cron: "0 3 * * 1"   # 每周一 03:00 UTC
+
+permissions:
+  contents: write
+
+jobs:
+  verify:
+    name: 校验 pins
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: 校验 pins
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/verify_pins.py ${{ inputs.update && '--update' || '' }}
+
+      - name: 提交更新的 pins
+        if: inputs.update
+        shell: bash
+        run: |
+          set -euo pipefail
+          if git diff --quiet; then
+            echo "pins 无变化"
+            exit 0
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add .github/pins/verified.json
+          git commit -m "chore(pins): 刷新依赖版本锁定"
+          git push
