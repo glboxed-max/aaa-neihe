@@ -141,6 +141,24 @@ runs:
           fi
         fi
 
+        # ---- 通用兜底：用到 SUSFS 符号但缺 susfs_def.h 的文件补上 include ----
+        # 新版本 SUSFS 引入了更多符号（VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT、
+        # susfs_is_sdcard_android_data_not_decrypted 等），补丁在部分子版本上
+        # 头部 hunk 会失配，导致符号未声明。这里统一兜底。
+        ensure_susfs_include() {
+          local f="$1"
+          [ -f "$f" ] || return 0
+          if grep -qE 'susfs_is_current_ksu_domain|DEFAULT_KSU_MNT_ID|DEFAULT_KSU_MNT_GROUP_ID|susfs_is_sdcard_android_data_not_decrypted|VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT|CL_COPY_MNT_NS' "$f" \
+             && ! grep -qF 'susfs_def.h' "$f"; then
+            awk '{ a[NR]=$0 } /^#include/ { last=NR } END { for (i=1;i<=NR;i++) { print a[i]; if (i==last) print "#include <linux/susfs_def.h>" } }' "$f" > "$f.susfs.tmp" && mv "$f.susfs.tmp" "$f"
+            echo "已为 $f 补 #include <linux/susfs_def.h>"
+          fi
+        }
+        for f in fs/namespace.c fs/proc/base.c fs/exec.c fs/open.c fs/namei.c \
+                 fs/stat.c fs/read_write.c fs/proc/task_mmu.c fs/proc_namespace.c; do
+          ensure_susfs_include "$f"
+        done
+
     - name: Apply Unicode bypass fix
       shell: bash
       run: |
