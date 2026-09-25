@@ -1026,7 +1026,7 @@ jobs:
       - name: 下载构建产物
         uses: actions/download-artifact@v4
         with:
-          name: ${{ inputs.ksu_variant }}_kernel-${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ needs.build-kernel.outputs.sub_level }}
+          name: 内核-${{ inputs.ksu_variant }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ needs.build-kernel.outputs.sub_level }}
           path: artifacts
 
       - name: 发布到 Releases
