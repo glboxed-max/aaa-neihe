@@ -147,6 +147,12 @@ on:
         required: false
         type: boolean
         default: true
+      manager_mode:
+        description: "管理器来源：源码构建 / 重打包 / 官方"
+        required: false
+        type: choice
+        options: ["源码构建", "重打包", "官方"]
+        default: "源码构建"
 
   workflow_call:
     inputs:
@@ -244,6 +250,10 @@ on:
         required: false
         type: boolean
         default: true
+      manager_mode:
+        required: false
+        type: string
+        default: "源码构建"
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.sub_level }}
@@ -478,18 +488,6 @@ jobs:
               || echo "::warning::ABK 资源克隆失败，DDK/ZRAM 升级可能不可用"
           fi
 
-      - name: 重打包管理器（改包名 + 重签名）
-        if: inputs.upload_manager && inputs.ksu_variant != 'None' && vars.MANAGER_RENAME != 'false'
-        uses: ./.github/actions/manager-repack
-        with:
-          variant: ${{ inputs.ksu_variant }}
-          ksu_ref: ${{ inputs.custom_ref }}
-          ksu_version: ${{ inputs.ksu_version }}
-          package: ${{ vars.MANAGER_PACKAGE || 'w.fkiu' }}
-          keystore_b64: ${{ vars.MANAGER_KEYSTORE_B64 }}
-          keystore_pass: ${{ vars.MANAGER_KEYSTORE_PASS || 'android' }}
-          out_dir: ${{ github.workspace }}/manager
-
       - name: 初始化并同步内核源码
         run: |
           set -euo pipefail
@@ -587,6 +585,35 @@ jobs:
           custom_ref: ${{ inputs.custom_ref }}
           ksu_version: ${{ inputs.ksu_version }}
           susfs: ${{ inputs.use_susfs }}
+
+      # ============================================================
+      # 5b. 管理器：优先用「源码构建」的产物，否则回退重打包
+      # ============================================================
+      - name: 取用源码构建的管理器
+        if: inputs.upload_manager && inputs.ksu_variant != 'None' && inputs.manager_mode == '源码构建'
+        uses: ./.github/actions/manager-fetch
+        with:
+          repo: ${{ github.repository }}
+          token: ${{ github.token }}
+          variant: ${{ inputs.ksu_variant }}
+          ksu_commit: ${{ env.KSU_COMMIT }}
+          package: ${{ vars.MANAGER_PACKAGE || 'w.fkiu' }}
+          out_dir: ${{ github.workspace }}/manager
+
+      - name: 重打包管理器（改包名 + 重签名）
+        if: >-
+          inputs.upload_manager && inputs.ksu_variant != 'None' &&
+          (inputs.manager_mode == '重打包' ||
+           (inputs.manager_mode == '源码构建' && env.MANAGER_SIZE == ''))
+        uses: ./.github/actions/manager-repack
+        with:
+          variant: ${{ inputs.ksu_variant }}
+          ksu_ref: ${{ inputs.custom_ref }}
+          ksu_version: ${{ inputs.ksu_version }}
+          package: ${{ vars.MANAGER_PACKAGE || 'w.fkiu' }}
+          keystore_b64: ${{ vars.MANAGER_KEYSTORE_B64 }}
+          keystore_pass: ${{ vars.MANAGER_KEYSTORE_PASS || 'android' }}
+          out_dir: ${{ github.workspace }}/manager
 
       # ============================================================
       # 6. 功能补丁
@@ -931,7 +958,7 @@ jobs:
       # 11. 失败诊断 & 上传
       # ============================================================
       - name: 下载对应版本管理器 APK
-        if: inputs.upload_manager && inputs.ksu_variant != 'None' && vars.MANAGER_RENAME == 'false'
+        if: inputs.upload_manager && inputs.ksu_variant != 'None' && inputs.manager_mode == '官方'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash

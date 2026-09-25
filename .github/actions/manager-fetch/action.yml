@@ -1,0 +1,124 @@
+name: 取用源码构建的管理器
+description: >-
+  从本仓库 Release 下载「源码构建」的管理器 APK（tag: manager-<变体>-<短sha>），
+  校验包名并计算 KernelSU 的 size/hash，写入 env 供内核注入 apk_sign。
+  若未找到匹配 Release，则什么都不做（由调用方回退到重打包）。
+
+inputs:
+  repo:
+    description: 本仓库（owner/repo）
+    required: true
+  token:
+    description: 访问 Releases 的 token
+    required: true
+  variant:
+    description: "SukiSU / Official / ReSukiSU / Next"
+    required: true
+  ksu_commit:
+    description: 内核实际使用的 KSU commit（用于精确匹配管理器版本）
+    required: false
+    default: ""
+  package:
+    description: 管理器包名（也是 APK 文件名）
+    required: false
+    default: "w.fkiu"
+  out_dir:
+    description: APK 输出目录（绝对路径）
+    required: true
+  tag:
+    description: 显式指定 Release tag（留空则按 commit 自动匹配）
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: 查找并下载匹配的管理器 Release
+      shell: bash
+      run: |
+        set -euo pipefail
+        REPO="${{ inputs.repo }}"
+        TOKEN="${{ inputs.token }}"
+        VARIANT="${{ inputs.variant }}"
+        PKG="${{ inputs.package }}"
+        OUT="${{ inputs.out_dir }}"
+        TAG="${{ inputs.tag }}"
+        mkdir -p "$OUT"
+
+        if [ -z "$TAG" ]; then
+          SHORT="$(printf '%.12s' "${{ inputs.ksu_commit }}")"
+          if [ -n "$SHORT" ]; then
+            TAG="manager-${VARIANT}-${SHORT}"
+          fi
+        fi
+        echo "查找管理器 Release: ${TAG:-<manager-${VARIANT}-*>}"
+
+        RELS="$(curl -fsSL -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github+json" \
+          "https://api.github.com/repos/$REPO/releases?per_page=100" || true)"
+        REL_JSON="$(printf '%s' "$RELS" | jq -c \
+          --arg t "$TAG" --arg p "manager-${VARIANT}-" '
+            (map(select($t != "" and .tag_name == $t)) | .[0]) as $exact
+            | (if $exact then $exact else (map(select(.tag_name | startswith($p))) | .[0]) end) // empty' \
+          2>/dev/null || true)"
+
+        if [ -z "$REL_JSON" ] || [ "$REL_JSON" = "null" ]; then
+          echo "::warning::未找到 $VARIANT 的源码管理器 Release，稍后将回退到重打包"
+          exit 0
+        fi
+
+        RTAG="$(printf '%s' "$REL_JSON" | jq -r '.tag_name')"
+        URL="$(printf '%s' "$REL_JSON" | jq -r --arg p "$PKG" '
+          (.assets // []) | map(select(.name == ($p + ".apk"))) | .[0].browser_download_url
+          // ((.assets // []) | map(select(.name | endswith(".apk"))) | .[0].browser_download_url // empty)')"
+        INFO="$(printf '%s' "$REL_JSON" | jq -r '
+          (.assets // []) | map(select(.name == "manager-info.env")) | .[0].browser_download_url // empty')"
+
+        if [ -z "$URL" ]; then
+          echo "::warning::Release $RTAG 未包含 APK，稍后将回退到重打包"
+          exit 0
+        fi
+
+        curl -fL -o "$OUT/$PKG.apk" "$URL"
+        if [ -n "$INFO" ]; then curl -fL -o "$OUT/manager-info.env" "$INFO" || true; fi
+        echo "✅ 已下载源码管理器: $RTAG -> $OUT/$PKG.apk"
+
+    - name: 校验包名并计算 size/hash
+      shell: bash
+      run: |
+        set -euo pipefail
+        PKG="${{ inputs.package }}"
+        OUT="${{ inputs.out_dir }}"
+        APK="$OUT/$PKG.apk"
+        [ -f "$APK" ] || { echo "未下载到管理器 APK，跳过"; exit 0; }
+
+        # 包名校验（优先用 Android build-tools 里的 aapt2/aapt）
+        BT="$(ls -d "${ANDROID_HOME:-$ANDROID_SDK_ROOT}"/build-tools/* 2>/dev/null | sort -V | tail -1 || true)"
+        AAPT=""
+        for c in "$BT/aapt2" "$BT/aapt" "$(command -v aapt2 || true)" "$(command -v aapt || true)"; do
+          [ -n "$c" ] && [ -x "$c" ] && AAPT="$c" && break
+        done
+        if [ -n "$AAPT" ]; then
+          BADGE="$("$AAPT" dump badging "$APK" 2>/dev/null | head -n1 || true)"
+          echo "badging: $BADGE"
+          if [ -n "$BADGE" ] && ! printf '%s' "$BADGE" | grep -q "name='$PKG'"; then
+            echo "::warning::APK 包名不是 $PKG（实际：$BADGE），跳过注入并回退"
+            rm -f "$APK"
+            exit 0
+          fi
+        else
+          echo "::warning::未找到 aapt/aapt2，跳过包名校验"
+        fi
+
+        SIGN="$(python3 "$GITHUB_WORKSPACE/.github/tools/get_apk_sign.py" "$APK")"
+        SIZE="$(printf '%s\n' "$SIGN" | sed -n 's/^SIZE=//p')"
+        HASH="$(printf '%s\n' "$SIGN" | sed -n 's/^HASH=//p')"
+        [ -n "$SIZE" ] && [ -n "$HASH" ] || { echo "::error::管理器签名解析失败"; exit 1; }
+
+        {
+          echo "MANAGER_APK=$(basename "$APK")"
+          echo "MANAGER_PACKAGE=$PKG"
+          echo "MANAGER_SIZE=$SIZE"
+          echo "MANAGER_HASH=$HASH"
+          echo "MANAGER_SOURCE=source-build"
+        } >> "$GITHUB_ENV"
+        echo "✅ 源码管理器已就绪: package=$PKG size=$SIZE hash=$HASH"

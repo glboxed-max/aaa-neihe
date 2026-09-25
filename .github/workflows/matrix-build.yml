@@ -122,6 +122,12 @@ on:
         required: false
         type: boolean
         default: true
+      manager_mode:
+        description: "管理器来源：源码构建 / 重打包 / 官方"
+        required: false
+        type: choice
+        options: ["源码构建", "重打包", "官方"]
+        default: "源码构建"
       publish_release:
         description: "各目标构建完成后发布到 Releases"
         required: false
@@ -231,3 +237,4 @@ jobs:
       custom_kernel_options: ""
       publish_release: ${{ inputs.publish_release }}
       upload_manager: ${{ inputs.upload_manager }}
+      manager_mode: ${{ inputs.manager_mode }}
