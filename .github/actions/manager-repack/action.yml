@@ -116,6 +116,10 @@ runs:
 
         if [ -n "${{ inputs.keystore_b64 }}" ]; then
           printf '%s' "${{ inputs.keystore_b64 }}" | base64 -d > ks.jks
+          echo "使用传入的自定义 keystore"
+        elif [ -f "$GITHUB_WORKSPACE/.github/manager/ks.jks.b64" ]; then
+          echo "使用仓库内置固定 keystore（保证内核/管理器跨运行可配对拿 root）"
+          base64 -d "$GITHUB_WORKSPACE/.github/manager/ks.jks.b64" > ks.jks
         else
           echo "未提供 keystore，本次随机生成（仅本次产物自洽）"
           keytool -genkeypair -keystore ks.jks -alias k -keyalg RSA -keysize 2048 \
