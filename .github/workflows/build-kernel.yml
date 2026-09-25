@@ -471,6 +471,18 @@ jobs:
               || echo "::warning::ABK 资源克隆失败，DDK/ZRAM 升级可能不可用"
           fi
 
+      - name: 重打包管理器（改包名 + 重签名）
+        if: inputs.upload_manager && inputs.ksu_variant != 'None' && vars.MANAGER_RENAME != 'false'
+        uses: ./.github/actions/manager-repack
+        with:
+          variant: ${{ inputs.ksu_variant }}
+          ksu_ref: ${{ inputs.custom_ref }}
+          ksu_version: ${{ inputs.ksu_version }}
+          package: ${{ vars.MANAGER_PACKAGE || 'w.fkiu' }}
+          keystore_b64: ${{ vars.MANAGER_KEYSTORE_B64 }}
+          keystore_pass: ${{ vars.MANAGER_KEYSTORE_PASS || 'android' }}
+          out_dir: ${{ github.workspace }}/manager
+
       - name: 初始化并同步内核源码
         run: |
           set -euo pipefail
@@ -572,6 +584,51 @@ jobs:
       # ============================================================
       # 6. 功能补丁
       # ============================================================
+      - name: 注入自定义管理器签名
+        if: inputs.ksu_variant != 'None' && env.MANAGER_SIZE != ''
+        shell: bash
+        run: |
+          set -euo pipefail
+          cd "$KERNEL_ROOT"
+          KSUDIR="KernelSU"
+          [ -d "KernelSU-Next" ] && KSUDIR="KernelSU-Next"
+          [ -d "$KSUDIR" ] || { echo "::warning::未找到 KSU 源码目录，跳过签名注入"; exit 0; }
+
+          SIZE="$MANAGER_SIZE"
+          HASH="$MANAGER_HASH"
+          PKG="$MANAGER_PACKAGE"
+          echo "注入自定义管理器签名: package=$PKG size=$SIZE hash=$HASH"
+
+          # 1) 数组式（SukiSU / ReSukiSU 等：apk_sign_keys[] = { ... }）
+          MAP="$(grep -rl 'apk_sign_keys\[\]' "$KSUDIR/kernel" 2>/dev/null | head -n1 || true)"
+          if [ -n "$MAP" ]; then
+            if grep -q "$HASH" "$MAP"; then
+              echo "签名已存在，跳过插入"
+            else
+              sed -i "s|apk_sign_keys\[\] = {|&\n    { ${SIZE}, \"${HASH}\" }, // custom-manager|" "$MAP"
+              echo "已插入数组: $MAP"
+            fi
+          fi
+
+          # 2) 宏式（tiann/KernelSU 等：KSU_EXPECTED_SIZE / KSU_EXPECTED_HASH）
+          for f in "$KSUDIR/kernel/Kbuild" "$KSUDIR/kernel/Makefile"; do
+            [ -f "$f" ] || continue
+            if grep -q '^KSU_EXPECTED_SIZE' "$f"; then
+              sed -i -E "s|^KSU_EXPECTED_SIZE :=.*|KSU_EXPECTED_SIZE := ${SIZE}|" "$f"
+              sed -i -E "s|^KSU_EXPECTED_HASH :=.*|KSU_EXPECTED_HASH := ${HASH}|" "$f"
+              echo "已设置 $f 的 KSU_EXPECTED_SIZE / KSU_EXPECTED_HASH"
+            fi
+          done
+
+          # 3) 若源码支持包名校验，则把期望包名设为自定义包名
+          for f in "$KSUDIR/kernel/Makefile" "$KSUDIR/kernel/Kbuild"; do
+            [ -f "$f" ] || continue
+            if grep -q 'ifdef KSU_MANAGER_PACKAGE' "$f" && ! grep -qE '^KSU_MANAGER_PACKAGE' "$f"; then
+              sed -i "0,/ifdef KSU_MANAGER_PACKAGE/s//KSU_MANAGER_PACKAGE := ${PKG}\nifdef KSU_MANAGER_PACKAGE/" "$f"
+              echo "已设置 $f 的 KSU_MANAGER_PACKAGE=$PKG"
+            fi
+          done
+
       - name: 应用 SUSFS
         if: inputs.use_susfs
         uses: ./.github/actions/susfs
@@ -816,7 +873,7 @@ jobs:
       # 11. 失败诊断 & 上传
       # ============================================================
       - name: 下载对应版本管理器 APK
-        if: inputs.upload_manager && inputs.ksu_variant != 'None'
+        if: inputs.upload_manager && inputs.ksu_variant != 'None' && vars.MANAGER_RENAME == 'false'
         env:
           GH_TOKEN: ${{ github.token }}
         shell: bash

@@ -94,6 +94,26 @@ Android GKI 内核自动化构建（GitHub Actions）。基于 [jiuxiao226/Kerne
 
 ---
 
+## 管理器重命名（默认 `w.fkiu`）
+
+构建时会自动：下载对应变体的管理器 → 用 apktool 改包名 → 重新签名 → 把新签名注入内核（这样重签名后的管理器仍能拿到 root）。
+
+| 仓库变量 | 作用 | 默认 |
+|---|---|---|
+| `MANAGER_PACKAGE` | 目标包名 | `w.fkiu` |
+| `MANAGER_RENAME` | 设为 `false` 可关闭改名（只下载官方管理器） | 开 |
+| `MANAGER_KEYSTORE_B64` | 自定义 keystore（base64） | 留空=每次随机生成（同一次产物自洽） |
+| `MANAGER_KEYSTORE_PASS` | keystore 口令 | `android` |
+
+原理：
+- **SukiSU / ReSukiSU**：可接受的管理器签名写死在 `apk_sign.c` 的 `apk_sign_keys[]` 数组里 → 构建时把 `{size,hash}` 插进去。
+- **tiann/KernelSU**：用 `KSU_EXPECTED_SIZE` / `KSU_EXPECTED_HASH` → 构建时替换其默认值。
+- 若源码支持 `KSU_MANAGER_PACKAGE`，同时把期望包名设为 `MANAGER_PACKAGE`。
+
+> 单独测试重打包：工作流 **`管理器重打包（改包名）`**（`.github/workflows/manager-repack.yml`）。
+
+---
+
 ## 矩阵构建
 
 工作流 **`矩阵内核构建`**（`.github/workflows/matrix-build.yml`）可按范围一次扇出多个内核构建。版本表在 **`.github/matrix/versions.tsv`**。
