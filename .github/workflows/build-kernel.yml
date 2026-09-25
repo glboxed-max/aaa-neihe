@@ -396,6 +396,9 @@ jobs:
         run: |
           git config --global user.name "github-actions"
           git config --global user.email "github-actions@github.com"
+          # googlesource 偶发 HTTP/2 拉取失败，降到 HTTP/1.1 并加长缓冲
+          git config --global http.version HTTP/1.1
+          git config --global http.postBuffer 524288000
 
       # ============================================================
       # 2. 初始化路径 / 同步源码
@@ -507,16 +510,16 @@ jobs:
 
           # repo sync 依赖外部 AOSP 镜像，容易卡；加进程级超时 + 重试，避免无谓地耗掉整个 runner。
           attempt=0
-          until [ "$attempt" -ge 3 ]; do
+          until [ "$attempt" -ge 6 ]; do
             if timeout 2400 "$REPO" --trace sync -c -j"$(nproc --all)" --no-tags --fail-fast; then
               break
             fi
             attempt=$((attempt+1))
-            echo "::warning::repo sync 超时/失败，重试 $attempt/3 ..."
-            sleep 15
+            echo "::warning::repo sync 超时/失败，重试 $attempt/6 ..."
+            sleep 30
           done
-          if [ "$attempt" -ge 3 ]; then
-            echo "::error::repo sync 连续 3 次超时/失败（多为外部网络问题，重跑即可）"
+          if [ "$attempt" -ge 6 ]; then
+            echo "::error::repo sync 连续 6 次超时/失败（多为外部网络问题，重跑即可）"
             exit 1
           fi
 
