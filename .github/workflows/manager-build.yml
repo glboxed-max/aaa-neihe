@@ -73,7 +73,8 @@ jobs:
           while IFS= read -r V; do
             # 默认分支/仓库映射（与 root-setup 一致）
             case "$V" in
-              SukiSU)   REPO="SukiSU-Ultra/SukiSU-Ultra"; DIR="SukiSU";   DEFAULT_REF="builtin" ;;
+              # 注意：SukiSU 的 builtin 分支是「纯内核分支」（无 manager/），管理器需用 main
+              SukiSU)   REPO="SukiSU-Ultra/SukiSU-Ultra"; DIR="SukiSU";   DEFAULT_REF="main" ;;
               ReSukiSU) REPO="ReSukiSU/ReSukiSU";         DIR="ReSukiSU"; DEFAULT_REF="main" ;;
               Official) REPO="tiann/KernelSU";            DIR="KernelSU"; DEFAULT_REF="main" ;;
               Next)     REPO="KernelSU-Next/KernelSU-Next"; DIR="KernelSU-Next"; DEFAULT_REF="dev" ;;
@@ -117,16 +118,24 @@ jobs:
           REF="${{ inputs.ksu_ref }}"
           [ -z "$REF" ] && REF="${{ matrix.v.default_ref }}"
 
-          git clone --filter=blob:none --single-branch "https://github.com/$REPO.git" "$DIR"
+          # 说明：不加 --single-branch，确保能切到任意分支（如 SukiSU 的 main）
+          git clone --filter=blob:none "https://github.com/$REPO.git" "$DIR"
           cd "$DIR"
           if git rev-parse --verify --quiet "origin/$REF" >/dev/null; then
-            git checkout "$REF"
+            git checkout -q "$REF"
           elif git rev-parse --verify --quiet "refs/tags/$REF" >/dev/null; then
-            git checkout "refs/tags/$REF"
+            git checkout -q "refs/tags/$REF"
           elif git fetch --filter=blob:none origin "$REF" >/dev/null 2>&1; then
-            git checkout FETCH_HEAD
+            git checkout -q FETCH_HEAD
           else
             echo "::warning::ref '$REF' 在 $REPO 中不存在，退回默认分支"
+          fi
+          # 管理器必须在含 manager/ 的分支上（例如 SukiSU 的 builtin 是纯内核分支）
+          if [ ! -d manager ]; then
+            FALLBACK="$(git symbolic-ref --short refs/remotes/origin/HEAD 2>/dev/null | sed 's#origin/##' || true)"
+            [ -n "$FALLBACK" ] || FALLBACK="main"
+            echo "::warning::ref '$REF' 不含 manager/，退回默认分支 $FALLBACK"
+            git checkout -q "$FALLBACK"
           fi
           cd ..
           COMMIT="$(git -C "$DIR" rev-parse HEAD)"
@@ -185,9 +194,12 @@ jobs:
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
           KSU_PACKAGE_NAME: ${{ inputs.package }}
+          # ReSukiSU 等的 ksud 使用 #![feature]（需 nightly）；RUSTC_BOOTSTRAP=1 允许在 stable 上启用
+          RUSTC_BOOTSTRAP: "1"
         run: |
           set -euo pipefail
           [ -f .github/scripts/setup-rust-build.sh ] || { echo "::warning::无 ksud 构建脚本，跳过"; exit 0; }
+          export RUSTC_BOOTSTRAP=1
           rustup update stable || true
           for T in aarch64-linux-android x86_64-linux-android armv7-linux-androideabi; do
             rustup target add "$T" || true
@@ -219,10 +231,13 @@ jobs:
             echo "::warning::源码 ksud 不可用，回退到官方 Release 的 APK 提取 libksud.so"
             REPO="${{ matrix.v.repo }}"
             curl -fsSL -H "Authorization: Bearer ${{ github.token }}" -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/$REPO/releases/latest" -o /tmp/rel.json
-            URL="$(jq -r '.assets[]? | select(.name|endswith(".apk")) | .browser_download_url' /tmp/rel.json | head -n1)"
-            [ -n "$URL" ] && [ "$URL" != "null" ] || { echo "::warning::官方 Release 无 APK，跳过 libksud"; exit 0; }
-            curl -fsSL -o /tmp/official.apk "$URL"
+              "https://api.github.com/repos/$REPO/releases/latest" -o /tmp/rel.json || echo '{}' > /tmp/rel.json
+            URL="$(jq -r '.assets[]? | select(.name|endswith(".apk")) | .browser_download_url' /tmp/rel.json 2>/dev/null | head -n1)"
+            if [ -z "$URL" ] || [ "$URL" = "null" ]; then
+              echo "::warning::官方 Release 无 APK，跳过 libksud.so（Gradle 仍会构建，可能缺 libksud）"
+              exit 0
+            fi
+            curl -fsSL -o /tmp/official.apk "$URL" || { echo "::warning::官方 APK 下载失败，跳过 libksud"; exit 0; }
             for ABI in arm64-v8a armeabi-v7a x86_64; do
               unzip -o -j /tmp/official.apk "lib/$ABI/libksud.so" -d "$JNI/$ABI" >/dev/null 2>&1 || true
             done
