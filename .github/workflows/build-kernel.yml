@@ -1169,6 +1169,47 @@ jobs:
           echo "---- VERSION_LOCK.md ----"
           cat VERSION_LOCK.md
 
+      - name: 生成 provenance 元数据（metadata.json）
+        if: always()
+        shell: bash
+        run: |
+          set -euo pipefail
+          # 来源：WildKernels/GKI_KernelSU_SUSFS 的 build.yml「Verified Metadata」段（简化为本仓库字段）
+          ZIP="$(ls -1 ./*AnyKernel3.zip 2>/dev/null | head -n1 || true)"
+          SHA="N/A"
+          [ -n "$ZIP" ] && SHA="sha256:$(sha256sum "$ZIP" | awk '{print $1}')"
+          KSRC="$(git -C "$KERNEL_ROOT/common" rev-parse HEAD 2>/dev/null || echo N/A)"
+
+          jq -n \
+            --arg method "GKI-AnyKernel3" \
+            --arg root "${ROOT_VARIANT:-N/A}" \
+            --arg root_commit "${KSU_COMMIT:-N/A}" \
+            --arg susfs "${SUSFS_COMMIT:-N/A}" \
+            --arg kernel_source "$KSRC" \
+            --arg kmi "${{ inputs.android_version }}-${{ inputs.kernel_version }}" \
+            --arg android_branch "${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ steps.resolve.outputs.os_patch_level }}" \
+            --arg provenance "${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+            --arg artifact "${ZIP:-N/A}" \
+            --arg sha "$SHA" \
+            --arg manager_pkg "${MANAGER_PACKAGE:-N/A}" \
+            --arg manager_size "${MANAGER_SIZE:-N/A}" \
+            --arg manager_hash "${MANAGER_HASH:-N/A}" \
+            '{
+               method: $method,
+               root: { variant: $root, commit: $root_commit },
+               susfs_commit: $susfs,
+               kernel_source_commit: $kernel_source,
+               kmi: $kmi,
+               android_branch: $android_branch,
+               manager: { package: $manager_pkg, size: $manager_size, hash: $manager_hash },
+               artifact: $artifact,
+               sha256: $sha,
+               provenance_url: $provenance,
+               status: "Build-verified only"
+             }' > metadata.json
+          echo "---- metadata.json ----"
+          cat metadata.json
+
       - name: 上传构建产物
         if: always()
         uses: actions/upload-artifact@v4
@@ -1181,6 +1222,7 @@ jobs:
             VERSION_LOCK.md
             BUILD_INFO.txt
             SHA256SUMS
+            metadata.json
             patch-rejects/**
           retention-days: 7
           if-no-files-found: warn
