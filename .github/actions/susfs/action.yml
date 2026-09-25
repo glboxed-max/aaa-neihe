@@ -170,6 +170,29 @@ runs:
           [ -n "$f" ] && ensure_susfs_include "$f"
         done < <(grep -rlE 'susfs_is_current_ksu_domain|DEFAULT_KSU_MNT_ID|DEFAULT_KSU_MNT_GROUP_ID|susfs_is_sdcard_android_data_not_decrypted|VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT|susfs_is_current_proc_umounted_for_zygote_next|CL_COPY_MNT_NS' --include='*.c' . 2>/dev/null || true)
 
+        # 新版 SUSFS 会调用 ksu_handle_post_execveat_sucompat；不同 KSU 变体可能没有该定义。
+        # 若内核侧引用了它，而 KSU 源码根本没用过这个符号，则补一个兼容定义（保证能链接）。
+        if grep -rq 'ksu_handle_post_execveat_sucompat' "$KERNEL_ROOT/common" 2>/dev/null; then
+          if ! grep -rq 'ksu_handle_post_execveat_sucompat' "$KERNEL_ROOT"/KernelSU/kernel "$KERNEL_ROOT"/KernelSU-Next/kernel 2>/dev/null; then
+            TARGET="$(grep -rl 'ksu_handle_execveat_sucompat' "$KERNEL_ROOT"/KernelSU/kernel "$KERNEL_ROOT"/KernelSU-Next/kernel 2>/dev/null | head -n1 || true)"
+            if [ -n "$TARGET" ]; then
+              {
+                echo ''
+                echo '/* SUSFS compat (auto-injected by aaa-neihe): new SUSFS references this symbol. */'
+                echo 'int ksu_handle_post_execveat_sucompat(int *fd, struct filename **filename_ptr,'
+                echo '                 void *argv_user, void *envp_user,'
+                echo '                 int *__never_use_flags, int *retval)'
+                echo '{'
+                echo '    return 0;'
+                echo '}'
+              } >> "$TARGET"
+              echo "已注入 ksu_handle_post_execveat_sucompat 兼容定义 -> ${TARGET#"$KERNEL_ROOT"/}"
+            else
+              echo "::warning::未能定位 KSU 源码文件，跳过 post_execveat 兼容定义"
+            fi
+          fi
+        fi
+
         # fs/namespace.c：其头部 hunk 常失配，导致以下声明缺失（补丁里本应加上）
         if [ -f fs/namespace.c ] && ! grep -qF '#define CL_COPY_MNT_NS' fs/namespace.c; then
           if grep -qE 'susfs_is_current_ksu_domain|susfs_is_sdcard_android_data_not_decrypted|CL_COPY_MNT_NS' fs/namespace.c; then
