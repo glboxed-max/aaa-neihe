@@ -15,7 +15,7 @@ runs:
   steps:
     - name: 应用 bypass 补丁
       shell: bash
-      working-directory: ${{ github.workspace }}/kernel
+      working-directory: ${{ env.KERNEL_ROOT }}
       run: |
         set -euo pipefail
 
@@ -23,9 +23,9 @@ runs:
         if [[ "${{ inputs.version }}" == "android14-6.1" \
            || "${{ inputs.version }}" == "android15-6.6" \
            || "${{ inputs.version }}" == "android16-6.12" ]]; then
-          TARGET_FILE="${{ github.workspace }}/kernel/common/kernel/module/version.c"
+          TARGET_FILE="${{ env.KERNEL_ROOT }}/common/kernel/module/version.c"
         else
-          TARGET_FILE="${{ github.workspace }}/kernel/common/kernel/module.c"
+          TARGET_FILE="${{ env.KERNEL_ROOT }}/common/kernel/module.c"
         fi
 
         [ -f "$TARGET_FILE" ] || { echo "::error::未找到 $TARGET_FILE"; exit 1; }

@@ -271,7 +271,6 @@ jobs:
       use_rekernel: ${{ inputs.use_rekernel }}
       use_kernel_hygiene: ${{ inputs.use_kernel_hygiene }}
       use_misc_configs: ${{ inputs.use_misc_configs }}
-      use_ptrace: ${{ inputs.use_ptrace }}
       extra_features: ${{ inputs.extra_features }}
       use_performance: ${{ inputs.use_performance }}
       use_bbrv3: ${{ inputs.use_bbrv3 }}
