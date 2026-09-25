@@ -841,11 +841,25 @@ jobs:
         run: |
           set -euo pipefail
           cd "$ANYKERNEL3"
-          # 把重打包后的管理器 APK 一并放进刷机包（附带）
-          if compgen -G "$GITHUB_WORKSPACE/manager/*.apk" >/dev/null 2>&1; then
-            cp "$GITHUB_WORKSPACE"/manager/*.apk ./
-            echo "已把管理器 APK 附带到 AnyKernel3：$(ls ./*.apk)"
+
+          # 配置 anykernel.sh 适配 GKI：
+          # osm0sis 默认是 Galaxy Nexus 示例（devicecheck=1 + 错误 BLOCK），
+          # 不改会在设备上因“设备校验不通过/分区错误”刷入报错。
+          if [ -f anykernel.sh ]; then
+            sed -i 's/^kernel.string=.*/kernel.string=aaa-neihe/' anykernel.sh
+            sed -i 's/^do.devicecheck=.*/do.devicecheck=0/' anykernel.sh
+            sed -i '0,/^BLOCK=/s|^BLOCK=.*|BLOCK=boot;|' anykernel.sh
+            sed -i '0,/^IS_SLOT_DEVICE=/s|^IS_SLOT_DEVICE=.*|IS_SLOT_DEVICE=1;|' anykernel.sh
+            echo "已配置 anykernel.sh:"; grep -E '^(kernel.string|do.devicecheck|BLOCK|IS_SLOT_DEVICE)=' anykernel.sh || true
           fi
+
+          # 把重打包后的管理器 APK 一并放进刷机包（放到子目录，避免干扰刷机逻辑）
+          if compgen -G "$GITHUB_WORKSPACE/manager/*.apk" >/dev/null 2>&1; then
+            mkdir -p manager
+            cp "$GITHUB_WORKSPACE"/manager/*.apk ./manager/
+            echo "已把管理器 APK 附带到 AnyKernel3/manager/：$(ls ./manager/*.apk)"
+          fi
+
           ZIP_NAME="${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ steps.resolve.outputs.sub_level }}-${{ steps.resolve.outputs.os_patch_level }}-${{ inputs.ksu_variant }}-AnyKernel3.zip"
           mv ../Image ./Image
           zip -r "../$ZIP_NAME" ./*
