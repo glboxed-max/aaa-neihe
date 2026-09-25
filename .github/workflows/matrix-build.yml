@@ -14,23 +14,18 @@ on:
     inputs:
       # ==================== 构建范围 ====================
       build_scope:
-        description: "构建范围：全部版本 / 5系列 / 6系列 / 单独指定"
+        description: "构建范围"
         required: true
         type: choice
         options:
-          - "全部版本"
-          - "5系列"
-          - "6系列"
+          - "全部版本-最新子版本"
+          - "全部版本-全部子版本"
+          - "5系列-最新子版本"
+          - "5系列-全部子版本"
+          - "6系列-最新子版本"
+          - "6系列-全部子版本"
           - "单独指定"
-        default: "全部版本"
-      sub_version_mode:
-        description: "子版本：最新子版本（每组合取最新一档）/ 全部子版本"
-        required: true
-        type: choice
-        options:
-          - "最新子版本"
-          - "全部子版本"
-        default: "最新子版本"
+        default: "全部版本-最新子版本"
 
       # ==================== 单独指定（仅 build_scope=单独指定 时生效） ====================
       android_version:
@@ -154,7 +149,17 @@ jobs:
         run: |
           set -euo pipefail
           SCOPE="${{ inputs.build_scope }}"
-          MODE="${{ inputs.sub_version_mode }}"
+          SERIES=All
+          MODE=latest
+          case "$SCOPE" in
+            "全部版本-全部子版本") SERIES=All; MODE=all ;;
+            "5系列-最新子版本")    SERIES=5;   MODE=latest ;;
+            "5系列-全部子版本")    SERIES=5;   MODE=all ;;
+            "6系列-最新子版本")    SERIES=6;   MODE=latest ;;
+            "6系列-全部子版本")    SERIES=6;   MODE=all ;;
+            "单独指定")            SERIES=manual ;;
+            *)                     SERIES=All; MODE=latest ;;
+          esac
           TABLE_FILE="$GITHUB_WORKSPACE/.github/matrix/versions.tsv"
 
           if [ ! -f "$TABLE_FILE" ]; then
@@ -162,19 +167,19 @@ jobs:
             exit 1
           fi
 
-          if [ "$SCOPE" = "单独指定" ]; then
+          if [ "$SERIES" = "manual" ]; then
             ROWS="${{ inputs.android_version }}|${{ inputs.kernel_version }}|${{ inputs.sub_level }}|${{ inputs.os_patch_level }}|${{ inputs.revision }}"
           else
             ALL="$(grep -vE '^[[:space:]]*(#|$)' "$TABLE_FILE")"
 
-            case "$SCOPE" in
-              "5系列") RE='^5\.' ;;
-              "6系列") RE='^6\.' ;;
-              *)       RE='.' ;;
+            case "$SERIES" in
+              5) RE='^5\.' ;;
+              6) RE='^6\.' ;;
+              *) RE='.' ;;
             esac
             FILTERED="$(printf '%s\n' "$ALL" | awk -F'|' -v re="$RE" '$2 ~ re {print}')"
 
-            if [ "$MODE" = "全部子版本" ]; then
+            if [ "$MODE" = "all" ]; then
               ROWS="$FILTERED"
             else
               ROWS=""

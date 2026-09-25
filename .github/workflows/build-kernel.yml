@@ -25,15 +25,15 @@ on:
         options: ["5.10", "5.15", "6.1", "6.6", "6.12"]
         default: "6.1"
       sub_level:
-        description: "子版本号（如 172）"
-        required: true
+        description: "子版本号（留空=自动取该组合最新一档，如 172）"
+        required: false
         type: string
-        default: "172"
+        default: ""
       os_patch_level:
-        description: "补丁级别（如 2026-06）"
-        required: true
+        description: "补丁级别（留空=自动跟随子版本，如 2026-06）"
+        required: false
         type: string
-        default: "2026-06"
+        default: ""
       revision:
         description: "Android 12 GKI 修订号（如 r1，仅 android12 用）"
         required: false
@@ -254,8 +254,13 @@ jobs:
     name: "${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ inputs.sub_level }}-${{ inputs.ksu_variant }}"
     runs-on: ubuntu-latest
     timeout-minutes: 120
+    outputs:
+      sub_level: ${{ steps.resolve.outputs.sub_level }}
+      os_patch_level: ${{ steps.resolve.outputs.os_patch_level }}
 
     env:
+      IN_SUB_LEVEL: ${{inputs.sub_level}}
+      IN_OS_PATCH_LEVEL: ${{inputs.os_patch_level}}
       CCACHE_COMPILERCHECK: "%compiler% -dumpmachine; %compiler% -dumpversion"
       CCACHE_NOHASHDIR: "true"
       CCACHE_HARDLINK: "true"
@@ -271,8 +276,8 @@ jobs:
             echo "| 项 | 值 |"
             echo "|---|---|"
             echo "| Android | ${{ inputs.android_version }} |"
-            echo "| 内核 | ${{ inputs.kernel_version }}.${{ inputs.sub_level }} |"
-            echo "| 补丁级别 | ${{ inputs.os_patch_level }} |"
+            echo "| 内核 | ${{ inputs.kernel_version }}.${{ steps.resolve.outputs.sub_level }} |"
+            echo "| 补丁级别 | ${{ steps.resolve.outputs.os_patch_level }} |"
             echo "| KSU 变体 | ${{ inputs.ksu_variant }} |"
             echo "| KSU 分支 | ${{ inputs.ksu_branch }} |"
             echo "| 自定义 ref | ${{ inputs.custom_ref }} |"
@@ -303,7 +308,30 @@ jobs:
       - name: 检出代码仓库
         uses: actions/checkout@v4
 
-      - name: 安装编译依赖
+      - name: 解析子版本 / 补丁级别
+        id: resolve
+        shell: bash
+        run: |
+          set -euo pipefail
+          A="${{ inputs.android_version }}"
+          K="${{ inputs.kernel_version }}"
+          SUB="$IN_SUB_LEVEL"
+          PATCH="$IN_OS_PATCH_LEVEL"
+          TABLE="$GITHUB_WORKSPACE/.github/matrix/versions.tsv"
+
+          if [ -z "$SUB" ] || [ "$SUB" = "latest" ]; then
+            ROW="$(grep -E "^${A}\|${K}\|" "$TABLE" | awk -F'|' '$3 ~ /^[0-9]+$/' | sort -t'|' -k3,3n | tail -n1)"
+            [ -n "$ROW" ] || { echo "::error::versions.tsv 中没有 $A/$K 的可用子版本"; exit 1; }
+            SUB="$(echo "$ROW" | cut -d'|' -f3)"
+            [ -n "$PATCH" ] || PATCH="$(echo "$ROW" | cut -d'|' -f4)"
+          fi
+          if [ -z "$PATCH" ]; then
+            PATCH="$(grep -E "^${A}\|${K}\|" "$TABLE" | awk -F'|' -v s="$SUB" '$3==s{print $4; exit}')"
+          fi
+          [ -n "$PATCH" ] || PATCH="lts"
+          echo "sub_level=$SUB" >> "$GITHUB_OUTPUT"
+          echo "os_patch_level=$PATCH" >> "$GITHUB_OUTPUT"
+          echo "解析结果: $A-$K.$SUB-$PATCH"
         run: |
           sudo apt-get update
           sudo apt-get install -y ccache python3 git curl wget build-essential libssl-dev \
@@ -321,10 +349,10 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.ccache
-          key: ${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.sub_level }}-${{ inputs.ksu_variant }}-ccache-${{ github.sha }}
+          key: ${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ steps.resolve.outputs.sub_level }}-${{ inputs.ksu_variant }}-ccache-${{ github.sha }}
           restore-keys: |
-            ${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.sub_level }}-${{ inputs.ksu_variant }}-ccache-
-            ${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.sub_level }}-ccache-
+            ${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ steps.resolve.outputs.sub_level }}-${{ inputs.ksu_variant }}-ccache-
+            ${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ steps.resolve.outputs.sub_level }}-ccache-
 
       - name: 缓存工具链
         id: cache-toolchain
@@ -375,7 +403,7 @@ jobs:
         with:
           android_version: ${{ inputs.android_version }}
           kernel_version: ${{ inputs.kernel_version }}
-          sub_level: ${{ inputs.sub_level }}
+          sub_level: ${{ steps.resolve.outputs.sub_level }}
 
       - name: 克隆依赖仓库
         run: |
@@ -448,7 +476,7 @@ jobs:
           set -euo pipefail
           cd "$KERNEL_ROOT"
 
-          FORMATTED_BRANCH="${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.os_patch_level }}"
+          FORMATTED_BRANCH="${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ steps.resolve.outputs.os_patch_level }}"
           echo "初始化 repo，分支: common-${FORMATTED_BRANCH}"
 
           timeout 900 "$REPO" init --depth=1 -u https://android.googlesource.com/kernel/manifest \
@@ -480,7 +508,7 @@ jobs:
         run: |
           set -euo pipefail
           cd "$KERNEL_ROOT/common"
-          RAW_SUB="${{ inputs.sub_level }}"
+          RAW_SUB="${{ steps.resolve.outputs.sub_level }}"
           [[ ! "$RAW_SUB" =~ ^[0-9]+$ ]] && CURRENT_SUB=99999 || CURRENT_SUB=$RAW_SUB
 
           NEEDS_FIX=false
@@ -550,8 +578,8 @@ jobs:
         with:
           android_version: ${{ inputs.android_version }}
           kernel_version: ${{ inputs.kernel_version }}
-          sub_level: ${{ inputs.sub_level }}
-          os_patch_level: ${{ inputs.os_patch_level }}
+          sub_level: ${{ steps.resolve.outputs.sub_level }}
+          os_patch_level: ${{ steps.resolve.outputs.os_patch_level }}
           variant: ${{ inputs.ksu_variant }}
 
       - name: ZRAM 增强
@@ -580,7 +608,7 @@ jobs:
         with:
           version: ${{ inputs.android_version }}-${{ inputs.kernel_version }}
           kernel_version: ${{ inputs.kernel_version }}
-          sublevel: ${{ inputs.sub_level }}
+          sublevel: ${{ steps.resolve.outputs.sub_level }}
 
       - name: 网络增强（IPSet + BBR）
         if: inputs.use_networking
@@ -724,7 +752,7 @@ jobs:
         run: |
           set -euo pipefail
           cd "$ANYKERNEL3"
-          ZIP_NAME="${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ inputs.sub_level }}-${{ inputs.os_patch_level }}-${{ inputs.ksu_variant }}-AnyKernel3.zip"
+          ZIP_NAME="${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ steps.resolve.outputs.sub_level }}-${{ steps.resolve.outputs.os_patch_level }}-${{ inputs.ksu_variant }}-AnyKernel3.zip"
           mv ../Image ./Image
           zip -r "../$ZIP_NAME" ./*
 
@@ -733,7 +761,7 @@ jobs:
         run: |
           set -euo pipefail
           cd bootimgs
-          GKI_URL="https://dl.google.com/android/gki/gki-certified-boot-android12-5.10-${{ inputs.os_patch_level }}_${{ inputs.revision }}.zip"
+          GKI_URL="https://dl.google.com/android/gki/gki-certified-boot-android12-5.10-${{ steps.resolve.outputs.os_patch_level }}_${{ inputs.revision }}.zip"
           FALLBACK_URL="https://dl.google.com/android/gki/gki-certified-boot-android12-5.10-2023-01_r1.zip"
           if [ "$(curl -sL -w '%{http_code}' "$GKI_URL" -o /dev/null)" = "200" ]; then
             curl -Lo gki-kernel.zip "$GKI_URL"
@@ -745,22 +773,22 @@ jobs:
           gzip -n -k -f -9 ./Image > ./Image.gz
 
           "$MKBOOTIMG" --header_version 4 --kernel Image --output boot.img --ramdisk out/ramdisk \
-            --os_version 12.0.0 --os_patch_level "${{ inputs.os_patch_level }}"
+            --os_version 12.0.0 --os_patch_level "${{ steps.resolve.outputs.os_patch_level }}"
           "$AVBTOOL" add_hash_footer --partition_name boot --partition_size $((64 * 1024 * 1024)) \
             --image boot.img --algorithm SHA256_RSA2048 --key "$BOOT_SIGN_KEY_PATH"
-          cp ./boot.img "../${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ inputs.sub_level }}-${{ inputs.os_patch_level }}-boot.img"
+          cp ./boot.img "../${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ steps.resolve.outputs.sub_level }}-${{ steps.resolve.outputs.os_patch_level }}-boot.img"
 
           "$MKBOOTIMG" --header_version 4 --kernel Image.gz --output boot-gz.img --ramdisk out/ramdisk \
-            --os_version 12.0.0 --os_patch_level "${{ inputs.os_patch_level }}"
+            --os_version 12.0.0 --os_patch_level "${{ steps.resolve.outputs.os_patch_level }}"
           "$AVBTOOL" add_hash_footer --partition_name boot --partition_size $((64 * 1024 * 1024)) \
             --image boot-gz.img --algorithm SHA256_RSA2048 --key "$BOOT_SIGN_KEY_PATH"
-          cp ./boot-gz.img "../${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ inputs.sub_level }}-${{ inputs.os_patch_level }}-boot-gz.img"
+          cp ./boot-gz.img "../${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ steps.resolve.outputs.sub_level }}-${{ steps.resolve.outputs.os_patch_level }}-boot-gz.img"
 
           "$MKBOOTIMG" --header_version 4 --kernel Image.lz4 --output boot-lz4.img --ramdisk out/ramdisk \
-            --os_version 12.0.0 --os_patch_level "${{ inputs.os_patch_level }}"
+            --os_version 12.0.0 --os_patch_level "${{ steps.resolve.outputs.os_patch_level }}"
           "$AVBTOOL" add_hash_footer --partition_name boot --partition_size $((64 * 1024 * 1024)) \
             --image boot-lz4.img --algorithm SHA256_RSA2048 --key "$BOOT_SIGN_KEY_PATH"
-          cp ./boot-lz4.img "../${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ inputs.sub_level }}-${{ inputs.os_patch_level }}-boot-lz4.img"
+          cp ./boot-lz4.img "../${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ steps.resolve.outputs.sub_level }}-${{ steps.resolve.outputs.os_patch_level }}-boot-lz4.img"
 
       - name: 构建 Boot 镜像 (Android 13+)
         if: inputs.android_version != 'android12'
@@ -772,17 +800,17 @@ jobs:
           "$MKBOOTIMG" --header_version 4 --kernel Image --output boot.img
           "$AVBTOOL" add_hash_footer --partition_name boot --partition_size $((64 * 1024 * 1024)) \
             --image boot.img --algorithm SHA256_RSA2048 --key "$BOOT_SIGN_KEY_PATH"
-          cp ./boot.img "../${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ inputs.sub_level }}-${{ inputs.os_patch_level }}-boot.img"
+          cp ./boot.img "../${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ steps.resolve.outputs.sub_level }}-${{ steps.resolve.outputs.os_patch_level }}-boot.img"
 
           "$MKBOOTIMG" --header_version 4 --kernel Image.gz --output boot-gz.img
           "$AVBTOOL" add_hash_footer --partition_name boot --partition_size $((64 * 1024 * 1024)) \
             --image boot-gz.img --algorithm SHA256_RSA2048 --key "$BOOT_SIGN_KEY_PATH"
-          cp ./boot-gz.img "../${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ inputs.sub_level }}-${{ inputs.os_patch_level }}-boot-gz.img"
+          cp ./boot-gz.img "../${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ steps.resolve.outputs.sub_level }}-${{ steps.resolve.outputs.os_patch_level }}-boot-gz.img"
 
           "$MKBOOTIMG" --header_version 4 --kernel Image.lz4 --output boot-lz4.img
           "$AVBTOOL" add_hash_footer --partition_name boot --partition_size $((64 * 1024 * 1024)) \
             --image boot-lz4.img --algorithm SHA256_RSA2048 --key "$BOOT_SIGN_KEY_PATH"
-          cp ./boot-lz4.img "../${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ inputs.sub_level }}-${{ inputs.os_patch_level }}-boot-lz4.img"
+          cp ./boot-lz4.img "../${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ steps.resolve.outputs.sub_level }}-${{ steps.resolve.outputs.os_patch_level }}-boot-lz4.img"
 
       # ============================================================
       # 11. 失败诊断 & 上传
@@ -841,7 +869,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ inputs.ksu_variant }}_kernel-${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ inputs.sub_level }}
+          name: ${{ inputs.ksu_variant }}_kernel-${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ steps.resolve.outputs.sub_level }}
           path: |
             *AnyKernel3.zip
             *.img
@@ -864,14 +892,14 @@ jobs:
       - name: 下载构建产物
         uses: actions/download-artifact@v4
         with:
-          name: ${{ inputs.ksu_variant }}_kernel-${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ inputs.sub_level }}
+          name: ${{ inputs.ksu_variant }}_kernel-${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ needs.build-kernel.outputs.sub_level }}
           path: artifacts
 
       - name: 发布到 Releases
         uses: softprops/action-gh-release@v2
         with:
-          tag_name: ${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ inputs.sub_level }}-${{ inputs.os_patch_level }}-${{ inputs.ksu_variant }}-r${{ github.run_number }}
-          name: "[${{ inputs.ksu_variant }}] ${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ inputs.sub_level }} build ${{ github.run_number }}"
+          tag_name: ${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ needs.build-kernel.outputs.sub_level }}-${{ needs.build-kernel.outputs.os_patch_level }}-${{ inputs.ksu_variant }}-r${{ github.run_number }}
+          name: "[${{ inputs.ksu_variant }}] ${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ needs.build-kernel.outputs.sub_level }} build ${{ github.run_number }}"
           files: artifacts/**/*
           fail_on_unmatched_files: false
           generate_release_notes: false

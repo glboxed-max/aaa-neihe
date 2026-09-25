@@ -52,8 +52,8 @@ Android GKI 内核自动化构建（GitHub Actions）。基于 [jiuxiao226/Kerne
 |---|---|
 | `android_version` | `android12 ~ android16` |
 | `kernel_version` | `5.10 / 5.15 / 6.1 / 6.6 / 6.12` |
-| `sub_level` | 子版本号，如 `145` |
-| `os_patch_level` | 补丁级别，如 `2025-09` |
+| `sub_level` | 子版本号（**留空=自动取该组合最新一档**） |
+| `os_patch_level` | 补丁级别（**留空=自动跟随子版本**） |
 | `revision` | Android 12 GKI 修订号（仅 `android12` 用），如 `r1` |
 
 ### KernelSU / 管理器
@@ -98,26 +98,19 @@ Android GKI 内核自动化构建（GitHub Actions）。基于 [jiuxiao226/Kerne
 
 工作流 **`矩阵内核构建`**（`.github/workflows/matrix-build.yml`）可按范围一次扇出多个内核构建。版本表在 **`.github/matrix/versions.tsv`**。
 
-### 范围选择
-| 选项 | 含义 |
+### 范围选择（单个下拉）
+| `build_scope` | 目标数 |
 |---|---|
-| `build_scope` = `全部版本` | 所有 Android 版本 |
-| `build_scope` = `5系列` | 只看 5.x 内核（5.10 / 5.15） |
-| `build_scope` = `6系列` | 只看 6.x 内核（6.1 / 6.6 / 6.12） |
-| `build_scope` = `单独指定` | 只构建下面单独填写的那一个组合 |
-| `sub_version_mode` = `最新子版本` | 每个 (Android,内核) 组合只取 **sub_level 最大** 的一档 |
-| `sub_version_mode` = `全部子版本` | 取该范围内的**全部**子版本 |
+| `全部版本-最新子版本`（默认） | 7 |
+| `全部版本-全部子版本` | 136 |
+| `5系列-最新子版本` | 4 |
+| `5系列-全部子版本` | 87 |
+| `6系列-最新子版本` | 3 |
+| `6系列-全部子版本` | 49 |
+| `单独指定` | 1（用下方 `android_version`/`kernel_version`/`sub_level`/`os_patch_level`/`revision`） |
 
-> 「单独指定」时使用 `android_version` / `kernel_version` / `sub_level` / `os_patch_level` / `revision` 五个输入。
-
-### 常用组合
-| 想要的效果 | 选择 |
-|---|---|
-| 每版本最新（默认） | `全部版本` + `最新子版本` → 7 个目标 |
-| 全部版本 × 全部子版本 | `全部版本` + `全部子版本` → 136 个目标 |
-| 5 系列全部子版本 | `5系列` + `全部子版本` |
-| 6 系列全部子版本 | `6系列` + `全部子版本` |
-| 只构建一个 | `单独指定` + 填 5 个输入 |
+> `5系列` = 5.10 / 5.15；`6系列` = 6.1 / 6.6 / 6.12。
+> 「单独指定」时 `sub_level` / `os_patch_level` 也可留空=自动取最新。
 
 ### 版本表（`versions.tsv`）
 格式：`android|kernel|sub_level|os_patch_level|revision`，`#` 开头为注释，`X|lts` 表示 lts 分支（“最新子版本”模式自动忽略）。当前收录：
