@@ -1,9 +1,9 @@
 name: 矩阵内核构建
 
 # ============================================================
-#  一次触发，按范围扇出多个内核构建
+#  一次触发，按“内核版本范围”扇出多个内核构建。
 #  版本表：.github/matrix/versions.tsv
-#  每个目标调用可复用工作流 build-kernel.yml
+#  例：kernel_scope=6.1 + sub_version_mode=全部子版本 → 只构建所有 6.1
 # ============================================================
 
 permissions:
@@ -13,48 +13,34 @@ on:
   workflow_dispatch:
     inputs:
       # ==================== 构建范围 ====================
-      build_scope:
-        description: "构建范围"
+      kernel_scope:
+        description: "内核版本范围"
         required: true
         type: choice
         options:
-          - "全部版本-最新子版本"
-          - "全部版本-全部子版本"
-          - "5系列-最新子版本"
-          - "5系列-全部子版本"
-          - "6系列-最新子版本"
-          - "6系列-全部子版本"
-          - "单独指定"
-        default: "全部版本-最新子版本"
-
-      # ==================== 单独指定（仅 build_scope=单独指定 时生效） ====================
-      android_version:
-        description: "单独指定：Android 版本"
-        required: false
+          - "全部"
+          - "5系列"
+          - "6系列"
+          - "5.10"
+          - "5.15"
+          - "6.1"
+          - "6.6"
+          - "6.12"
+        default: "全部"
+      android_scope:
+        description: "Android 版本过滤（主要用于 5.x）"
+        required: true
         type: choice
-        options: [android12, android13, android14, android15, android16]
-        default: android14
-      kernel_version:
-        description: "单独指定：内核版本"
-        required: false
+        options: [全部, android12, android13, android14, android15, android16]
+        default: 全部
+      sub_version_mode:
+        description: "子版本"
+        required: true
         type: choice
-        options: ["5.10", "5.15", "6.1", "6.6", "6.12"]
-        default: "6.1"
-      sub_level:
-        description: "单独指定：子版本号（如 172）"
-        required: false
-        type: string
-        default: "172"
-      os_patch_level:
-        description: "单独指定：补丁级别（如 2026-06）"
-        required: false
-        type: string
-        default: "2026-06"
-      revision:
-        description: "单独指定：Android 12 GKI 修订号（仅 android12 用）"
-        required: false
-        type: string
-        default: "r1"
+        options:
+          - "最新子版本"
+          - "全部子版本"
+        default: "最新子版本"
 
       # ==================== KernelSU / 管理器 ====================
       ksu_variant:
@@ -86,6 +72,11 @@ on:
         required: false
         type: boolean
         default: true
+      susfs_commit:
+        description: "SUSFS 固定提交（留空=默认 pin）"
+        required: false
+        type: string
+        default: ""
       use_zram:
         description: "启用 ZRAM 增强算法"
         required: false
@@ -126,6 +117,11 @@ on:
         required: false
         type: boolean
         default: false
+      upload_manager:
+        description: "同时上传对应版本的管理器 APK"
+        required: false
+        type: boolean
+        default: true
       publish_release:
         description: "各目标构建完成后发布到 Releases"
         required: false
@@ -148,49 +144,41 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          SCOPE="${{ inputs.build_scope }}"
-          SERIES=All
-          MODE=latest
-          case "$SCOPE" in
-            "全部版本-全部子版本") SERIES=All; MODE=all ;;
-            "5系列-最新子版本")    SERIES=5;   MODE=latest ;;
-            "5系列-全部子版本")    SERIES=5;   MODE=all ;;
-            "6系列-最新子版本")    SERIES=6;   MODE=latest ;;
-            "6系列-全部子版本")    SERIES=6;   MODE=all ;;
-            "单独指定")            SERIES=manual ;;
-            *)                     SERIES=All; MODE=latest ;;
-          esac
+          KSCOPE="${{ inputs.kernel_scope }}"
+          ASCOPE="${{ inputs.android_scope }}"
+          MODE="${{ inputs.sub_version_mode }}"
           TABLE_FILE="$GITHUB_WORKSPACE/.github/matrix/versions.tsv"
+          [ -f "$TABLE_FILE" ] || { echo "::error::未找到 $TABLE_FILE"; exit 1; }
 
-          if [ ! -f "$TABLE_FILE" ]; then
-            echo "::error::未找到版本表 $TABLE_FILE"
-            exit 1
+          case "$KSCOPE" in
+            "全部") RE='.' ;;
+            "5系列") RE='^5\.' ;;
+            "6系列") RE='^6\.' ;;
+            "5.10") RE='^5\.10$' ;;
+            "5.15") RE='^5\.15$' ;;
+            "6.1")  RE='^6\.1$' ;;
+            "6.6")  RE='^6\.6$' ;;
+            "6.12") RE='^6\.12$' ;;
+            *) echo "::error::未知 kernel_scope: $KSCOPE"; exit 1 ;;
+          esac
+
+          ALL="$(grep -vE '^[[:space:]]*(#|$)' "$TABLE_FILE")"
+          FILTERED="$(printf '%s\n' "$ALL" | awk -F'|' -v re="$RE" '$2 ~ re {print}')"
+          if [ "$ASCOPE" != "全部" ]; then
+            FILTERED="$(printf '%s\n' "$FILTERED" | awk -F'|' -v a="$ASCOPE" '$1 == a {print}')"
           fi
 
-          if [ "$SERIES" = "manual" ]; then
-            ROWS="${{ inputs.android_version }}|${{ inputs.kernel_version }}|${{ inputs.sub_level }}|${{ inputs.os_patch_level }}|${{ inputs.revision }}"
+          if [ "$MODE" = "全部子版本" ]; then
+            ROWS="$FILTERED"
           else
-            ALL="$(grep -vE '^[[:space:]]*(#|$)' "$TABLE_FILE")"
-
-            case "$SERIES" in
-              5) RE='^5\.' ;;
-              6) RE='^6\.' ;;
-              *) RE='.' ;;
-            esac
-            FILTERED="$(printf '%s\n' "$ALL" | awk -F'|' -v re="$RE" '$2 ~ re {print}')"
-
-            if [ "$MODE" = "all" ]; then
-              ROWS="$FILTERED"
-            else
-              ROWS=""
-              while IFS= read -r KEY; do
-                [ -z "$KEY" ] && continue
-                A="${KEY%%|*}"; K="${KEY##*|}"
-                R="$(printf '%s\n' "$FILTERED" | awk -F'|' -v a="$A" -v k="$K" \
-                     '$1==a && $2==k && $3 ~ /^[0-9]+$/ {print}' | sort -t'|' -k3,3n | tail -n1)"
-                [ -n "$R" ] && ROWS="${ROWS}${R}"$'\n'
-              done < <(printf '%s\n' "$FILTERED" | awk -F'|' '{print $1"|"$2}' | sort -u)
-            fi
+            ROWS=""
+            while IFS= read -r KEY; do
+              [ -z "$KEY" ] && continue
+              A="${KEY%%|*}"; K="${KEY##*|}"
+              R="$(printf '%s\n' "$FILTERED" | awk -F'|' -v a="$A" -v k="$K" \
+                   '$1==a && $2==k && $3 ~ /^[0-9]+$/ {print}' | sort -t'|' -k3,3n | tail -n1)"
+              [ -n "$R" ] && ROWS="${ROWS}${R}"$'\n'
+            done < <(printf '%s\n' "$FILTERED" | awk -F'|' '{print $1"|"$2}' | sort -u)
           fi
 
           JSON="[]"
@@ -204,7 +192,7 @@ jobs:
           echo "matrix=$JSON" >> "$GITHUB_OUTPUT"
           COUNT="$(echo "$JSON" | jq 'length')"
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
-          echo "范围=$SCOPE 子版本=$MODE -> 目标数=$COUNT"
+          echo "内核范围=$KSCOPE Android=$ASCOPE 子版本=$MODE -> 目标数=$COUNT"
           echo "$JSON" | jq -r '.[] | "  \(.android_version)-\(.kernel_version).\(.sub_level)-\(.os_patch_level)"'
 
   build:
@@ -228,7 +216,7 @@ jobs:
       custom_ref: ${{ inputs.custom_ref }}
       ksu_version: ${{ inputs.ksu_version }}
       use_susfs: ${{ inputs.use_susfs }}
-      susfs_commit: ""
+      susfs_commit: ${{ inputs.susfs_commit }}
       use_zram: ${{ inputs.use_zram }}
       zram_full_algo: ${{ inputs.zram_full_algo }}
       use_bbg: ${{ inputs.use_bbg }}
