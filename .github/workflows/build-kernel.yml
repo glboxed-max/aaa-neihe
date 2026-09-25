@@ -510,22 +510,16 @@ jobs:
 
           # repo sync 依赖外部 AOSP 镜像，容易卡；加进程级超时 + 重试，避免无谓地耗掉整个 runner。
           attempt=0
-          MIRROR_SET=false
           until [ "$attempt" -ge 8 ]; do
             if timeout 2400 "$REPO" --trace sync -c -j"$(nproc --all)" --no-tags --fail-fast --no-clone-bundle; then
               break
             fi
             attempt=$((attempt+1))
-            if [ "$attempt" -ge 4 ] && [ "$MIRROR_SET" = false ]; then
-              echo "::warning::googlesource 多次失败，切换清华 AOSP 镜像重试"
-              git config --global url."https://mirrors.tuna.tsinghua.edu.cn/git/AOSP/".insteadOf "https://android.googlesource.com/"
-              MIRROR_SET=true
-            fi
             echo "::warning::repo sync 超时/失败，重试 $attempt/8 ..."
             sleep 30
           done
           if [ "$attempt" -ge 8 ]; then
-            echo "::error::repo sync 连续 8 次超时/失败（多为外部网络问题，重跑即可）"
+            echo "::error::repo sync 连续 8 次超时/失败（外部网络问题，重跑即可）"
             exit 1
           fi
 
