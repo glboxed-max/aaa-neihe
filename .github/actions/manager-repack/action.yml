@@ -1,0 +1,163 @@
+name: Repack Manager APK
+description: 下载对应变体的管理器 APK，改成指定包名并重签名，输出 size/hash（KernelSU expected 值）
+
+inputs:
+  variant:
+    description: "SukiSU / Official / ReSukiSU / Next"
+    required: true
+  ksu_ref:
+    description: "要匹配的分支/Tag（可为空）"
+    required: false
+    default: ""
+  ksu_version:
+    description: "要匹配的版本号（可为空，如 40900）"
+    required: false
+    default: ""
+  package:
+    description: "目标包名（如 w.fkiu）"
+    required: true
+  keystore_b64:
+    description: "Keystore 的 base64（留空则每次随机生成）"
+    required: false
+    default: ""
+  keystore_pass:
+    description: "Keystore 口令"
+    required: false
+    default: "android"
+  out_dir:
+    description: "输出目录（绝对路径）"
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: 准备工具
+      shell: bash
+      run: |
+        set -euo pipefail
+        sudo apt-get update -qq
+        sudo apt-get install -y -qq --no-install-recommends default-jre-headless unzip zip curl >/dev/null
+        OUT="${{ inputs.out_dir }}"
+        mkdir -p "$OUT/tools"
+        curl -fL -o "$OUT/tools/apktool.jar" \
+          https://github.com/iBotPeaches/Apktool/releases/download/v2.11.1/apktool_2.11.1.jar
+        curl -fL -o "$OUT/tools/uber-apk-signer.jar" \
+          https://github.com/patrickfav/uber-apk-signer/releases/download/v1.3.0/uber-apk-signer-1.3.0.jar
+        java -version 2>&1 | head -n1
+
+    - name: 下载管理器 APK（按所选 ref/版本）
+      shell: bash
+      env:
+        GH_TOKEN: ${{ github.token }}
+      run: |
+        set -euo pipefail
+        OUT="${{ inputs.out_dir }}"
+        case "${{ inputs.variant }}" in
+          SukiSU)   REPO="SukiSU-Ultra/SukiSU-Ultra" ;;
+          Official) REPO="tiann/KernelSU" ;;
+          ReSukiSU) REPO="ReSukiSU/ReSukiSU" ;;
+          Next)     REPO="KernelSU-Next/KernelSU-Next" ;;
+          *) echo "::error::未知变体"; exit 1 ;;
+        esac
+        REF="${{ inputs.ksu_ref }}"
+        VER="${{ inputs.ksu_version }}"
+        echo "REPO=$REPO REF=$REF VER=$VER"
+
+        RELS="$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                "https://api.github.com/repos/$REPO/releases?per_page=30" || echo '[]')"
+
+        # 选 release：优先 tag 完全匹配；否则按版本号匹配资源名；再否则最新的含 APK 的
+        URL="$(printf '%s' "$RELS" | jq -r --arg ref "$REF" --arg ver "$VER" '
+          def apk($r): ($r.assets // []) | map(select(.name|endswith(".apk")));
+          (map(select(($ref!="") and (.tag_name==$ref))) | .[0]) as $byref
+          | (if $byref then $byref
+             elif $ver!="" then (map(select((apk(.)|length)>0 and ([apk(.)[]|select(.name|contains($ver))]|length)>0)) | .[0])
+             else (map(select((apk(.)|length)>0)) | .[0]) end) as $rel
+          | if $rel then
+              (apk($rel) | map(select(($ver=="") or (.name|contains($ver))))) [0].browser_download_url // (apk($rel)[0].browser_download_url)
+            else empty end' 2>/dev/null || true)"
+
+        if [ -z "$URL" ] || [ "$URL" = "null" ]; then
+          echo "::error::未能匹配到 $REPO 的合适 APK（REF=$REF VER=$VER）"
+          exit 1
+        fi
+        echo "下载: $URL"
+        curl -fL -H "Authorization: Bearer $GH_TOKEN" -o "$OUT/original.apk" "$URL"
+        ls -la "$OUT/original.apk"
+
+    - name: 改包名并重打包
+      shell: bash
+      run: |
+        set -euo pipefail
+        OUT="${{ inputs.out_dir }}"
+        NEW="${{ inputs.package }}"
+        cd "$OUT"
+        java -jar tools/apktool.jar d -f -o dec original.apk >/dev/null
+
+        OLD="$(grep -oE 'package="[^"]+"' dec/AndroidManifest.xml | head -n1 | sed -E 's/package="([^"]+)"/\1/')"
+        [ -n "$OLD" ] || { echo "::error::无法从 manifest 读取包名"; exit 1; }
+        echo "包名: $OLD -> $NEW"
+
+        sed -i "s|package=\"$OLD\"|package=\"$NEW\"|" dec/AndroidManifest.xml
+
+        OLDP="${OLD//./\/}"
+        NEWP="${NEW//./\/}"
+        shopt -s nullglob
+        for d in dec/smali dec/smali_classes*; do
+          [ -d "$d/$OLDP" ] || continue
+          mkdir -p "$d/$(dirname "$NEWP")"
+          mv "$d/$OLDP" "$d/$NEWP"
+        done
+        find dec -name '*.smali' -print0 | xargs -0 -r sed -i "s|L${OLDP}|L${NEWP}|g"
+
+        java -jar tools/apktool.jar b dec -o unsigned.apk >/dev/null
+        ls -la unsigned.apk
+
+    - name: 重签名
+      shell: bash
+      run: |
+        set -euo pipefail
+        OUT="${{ inputs.out_dir }}"
+        PASS="${{ inputs.keystore_pass }}"
+        cd "$OUT"
+
+        if [ -n "${{ inputs.keystore_b64 }}" ]; then
+          printf '%s' "${{ inputs.keystore_b64 }}" | base64 -d > ks.jks
+        else
+          echo "未提供 keystore，本次随机生成（仅本次产物自洽）"
+          keytool -genkeypair -keystore ks.jks -alias k -keyalg RSA -keysize 2048 \
+            -validity 10000 -storepass "$PASS" -keypass "$PASS" \
+            -dname "CN=w.fkiu, OU=manager, O=manager, L=x, S=x, C=CN" >/dev/null 2>&1
+        fi
+
+        rm -rf signed && mkdir -p signed
+        java -jar tools/uber-apk-signer.jar --apks unsigned.apk \
+          --ks ks.jks --ksAlias k --ksPass "$PASS" --ksKeyPass "$PASS" \
+          --out signed --overwrite >/dev/null
+
+        SIGNED="$(find signed -name '*.apk' | head -n1)"
+        [ -n "$SIGNED" ] || { echo "::error::签名失败"; exit 1; }
+        cp "$SIGNED" "${{ inputs.package }}.apk"
+        ls -la "${{ inputs.package }}.apk"
+
+    - name: 计算 size / hash
+      id: sign
+      shell: bash
+      run: |
+        set -euo pipefail
+        OUT="${{ inputs.out_dir }}"
+        RES="$(python3 "$GITHUB_WORKSPACE/.github/tools/get_apk_sign.py" "$OUT/${{ inputs.package }}.apk")"
+        echo "$RES"
+        SIZE="$(printf '%s\n' "$RES" | sed -nE 's/^SIZE=(.*)$/\1/p')"
+        HASH="$(printf '%s\n' "$RES" | sed -nE 's/^HASH=(.*)$/\1/p')"
+        [ -n "$SIZE" ] && [ -n "$HASH" ] || { echo "::error::解析签名失败"; exit 1; }
+        {
+          echo "MANAGER_SIZE=$SIZE"
+          echo "MANAGER_HASH=$HASH"
+          echo "MANAGER_APK=$OUT/${{ inputs.package }}.apk"
+          echo "MANAGER_PACKAGE=${{ inputs.package }}"
+        } >> "$GITHUB_ENV"
+        {
+          echo "size=$SIZE"
+          echo "hash=$HASH"
+        } >> "$GITHUB_OUTPUT"

@@ -1,0 +1,85 @@
+name: 管理器重打包（改包名）
+
+# ============================================================
+#  下载对应变体的管理器，改成指定包名 + 重签名，并输出内核需要的
+#  KSU_EXPECTED_SIZE / KSU_EXPECTED_HASH。
+#  先用它验证重打包可用；验证通过后再接进内核构建。
+# ============================================================
+
+permissions:
+  contents: write
+
+on:
+  workflow_dispatch:
+    inputs:
+      variant:
+        description: "管理器变体"
+        required: true
+        type: choice
+        options: [SukiSU, Official, ReSukiSU, Next]
+        default: SukiSU
+      ksu_ref:
+        description: "匹配的分支/Tag（留空=不指定）"
+        required: false
+        type: string
+        default: ""
+      ksu_version:
+        description: "匹配的版本号（如 40900，留空=最新）"
+        required: false
+        type: string
+        default: ""
+      package:
+        description: "目标包名"
+        required: true
+        type: string
+        default: "w.fkiu"
+      keystore_b64:
+        description: "自定义 keystore（base64，留空=每次随机生成）"
+        required: false
+        type: string
+        default: ""
+
+concurrency:
+  group: manager-repack-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  repack:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    steps:
+      - name: 检出代码仓库
+        uses: actions/checkout@v4
+
+      - name: 重打包管理器
+        uses: ./.github/actions/manager-repack
+        with:
+          variant: ${{ inputs.variant }}
+          ksu_ref: ${{ inputs.ksu_ref }}
+          ksu_version: ${{ inputs.ksu_version }}
+          package: ${{ inputs.package }}
+          keystore_b64: ${{ inputs.keystore_b64 }}
+          keystore_pass: "android"
+          out_dir: ${{ github.workspace }}/manager
+
+      - name: 构建摘要
+        run: |
+          {
+            echo "## 管理器重打包"
+            echo "| 项 | 值 |"
+            echo "|---|---|"
+            echo "| 变体 | ${{ inputs.variant }} |"
+            echo "| 匹配 ref | ${{ inputs.ksu_ref }} |"
+            echo "| 匹配版本 | ${{ inputs.ksu_version }} |"
+            echo "| 目标包名 | ${{ inputs.package }} |"
+            echo "| KSU_EXPECTED_SIZE | \`${MANAGER_SIZE}\` |"
+            echo "| KSU_EXPECTED_HASH | \`${MANAGER_HASH}\` |"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: 上传管理器 APK
+        uses: actions/upload-artifact@v4
+        with:
+          name: manager-${{ inputs.package }}-${{ inputs.variant }}
+          path: manager/*.apk
+          if-no-files-found: error
+          retention-days: 7
