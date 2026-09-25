@@ -426,9 +426,9 @@ jobs:
             return 1
           }
 
-          echo "克隆 AnyKernel3..."
-          retry_clone https://github.com/osm0sis/AnyKernel3.git master AnyKernel3 || \
-            retry_clone https://github.com/WildKernels/AnyKernel3.git gki-2.0 AnyKernel3
+          echo "克隆 AnyKernel3（GKI 预配置版）..."
+          retry_clone https://github.com/WildKernels/AnyKernel3.git gki-2.0 AnyKernel3 || \
+            retry_clone https://github.com/osm0sis/AnyKernel3.git master AnyKernel3
           echo "ANYKERNEL_COMMIT=$(git -C AnyKernel3 rev-parse HEAD)" >> "$GITHUB_ENV"
           rm -rf AnyKernel3/.git
 
@@ -842,15 +842,15 @@ jobs:
           set -euo pipefail
           cd "$ANYKERNEL3"
 
-          # 配置 anykernel.sh 适配 GKI：
-          # osm0sis 默认是 Galaxy Nexus 示例（devicecheck=1 + 错误 BLOCK），
-          # 不改会在设备上因“设备校验不通过/分区错误”刷入报错。
+          # 配置 anykernel.sh 适配 GKI（兼容 WildKernels gki-2.0 的小写变量与 osm0sis 的大写变量）
           if [ -f anykernel.sh ]; then
-            sed -i 's/^kernel.string=.*/kernel.string=aaa-neihe/' anykernel.sh
-            sed -i 's/^do.devicecheck=.*/do.devicecheck=0/' anykernel.sh
-            sed -i '0,/^BLOCK=/s|^BLOCK=.*|BLOCK=boot;|' anykernel.sh
-            sed -i '0,/^IS_SLOT_DEVICE=/s|^IS_SLOT_DEVICE=.*|IS_SLOT_DEVICE=1;|' anykernel.sh
-            echo "已配置 anykernel.sh:"; grep -E '^(kernel.string|do.devicecheck|BLOCK|IS_SLOT_DEVICE)=' anykernel.sh || true
+            sed -i -E 's/^(kernel\.string=).*/\1aaa-neihe/' anykernel.sh
+            sed -i -E 's/^(do\.devicecheck=).*/\10/' anykernel.sh
+            sed -i -E '0,/^block=/s|^block=.*|block=boot|' anykernel.sh
+            sed -i -E '0,/^is_slot_device=/s|^is_slot_device=.*|is_slot_device=auto|' anykernel.sh
+            sed -i -E '0,/^BLOCK=/s|^BLOCK=.*|BLOCK=boot;|' anykernel.sh
+            sed -i -E '0,/^IS_SLOT_DEVICE=/s|^IS_SLOT_DEVICE=.*|IS_SLOT_DEVICE=1;|' anykernel.sh
+            echo "已配置 anykernel.sh:"; grep -iE '^(kernel\.string|do\.devicecheck|block|is_slot_device)=' anykernel.sh || true
           fi
 
           # 把重打包后的管理器 APK 一并放进刷机包（放到子目录，避免干扰刷机逻辑）
