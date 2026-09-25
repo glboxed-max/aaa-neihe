@@ -127,11 +127,11 @@ on:
         required: false
         type: boolean
         default: true
-      use_ptrace:
-        description: "应用 GKI ptrace 补丁（仅 < 5.16 生效）"
+      extra_features:
+        description: "额外功能（逗号分隔）：bypass,droidspaces,nomount,btf,device_patches,ccache"
         required: false
-        type: boolean
-        default: true
+        type: string
+        default: ""
       use_performance:
         description: "应用性能优化补丁（WildKernels/kernel_patches）"
         required: false
@@ -260,6 +260,7 @@ jobs:
       use_kernel_hygiene: ${{ inputs.use_kernel_hygiene }}
       use_misc_configs: ${{ inputs.use_misc_configs }}
       use_ptrace: ${{ inputs.use_ptrace }}
+      extra_features: ${{ inputs.extra_features }}
       use_performance: ${{ inputs.use_performance }}
       use_bbrv3: ${{ inputs.use_bbrv3 }}
       version: ""

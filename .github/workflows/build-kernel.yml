@@ -117,11 +117,11 @@ on:
         required: false
         type: boolean
         default: true
-      use_ptrace:
-        description: "应用 GKI ptrace 补丁（仅内核 < 5.16 生效）"
+      extra_features:
+        description: "额外功能（逗号分隔）：bypass,droidspaces,nomount,btf,device_patches,ccache"
         required: false
-        type: boolean
-        default: true
+        type: string
+        default: ""
       use_performance:
         description: "应用性能优化补丁（来源 WildKernels/kernel_patches）"
         required: false
@@ -249,6 +249,10 @@ on:
         required: false
         type: boolean
         default: false
+      extra_features:
+        required: false
+        type: string
+        default: ""
       version:
         required: false
         type: string
@@ -507,8 +511,8 @@ jobs:
               || echo "::warning::ABK 资源克隆失败，DDK/ZRAM 升级可能不可用"
           fi
 
-      - name: 克隆 kernel_patches（性能 / BBRv3 / ptrace 补丁源）
-        if: inputs.use_performance || inputs.use_bbrv3 || inputs.use_ptrace
+      - name: 克隆 kernel_patches（性能 / BBRv3 / ptrace / 设备补丁源）
+        if: inputs.use_performance || inputs.use_bbrv3 || inputs.use_ptrace || contains(format(',{0},', inputs.extra_features), ',device_patches,')
         run: |
           set -euo pipefail
           cd "$GITHUB_WORKSPACE"
@@ -516,11 +520,28 @@ jobs:
             echo "kernel_patches 已存在，跳过克隆"
             exit 0
           fi
-          # 来源：WildKernels/kernel_patches（性能/BBRv3/ptrace 补丁集合）
+          # 来源：WildKernels/kernel_patches（性能/BBRv3/ptrace/三星 min_kdp 等补丁集合）
           git clone --depth 1 https://github.com/WildKernels/kernel_patches.git kernel_patches \
             || git clone --depth 1 -b main https://github.com/WildKernels/kernel_patches.git kernel_patches \
             || { echo "::error::kernel_patches 克隆失败"; exit 1; }
           echo "kernel_patches commit: $(git -C kernel_patches rev-parse HEAD)"
+
+      # ============================================================
+      # ccache（可选，extra_features 含 ccache 时启用）
+      # ============================================================
+      - name: 安装 ccache
+        if: contains(format(',{0},', inputs.extra_features), ',ccache,')
+        uses: ./.github/actions/ccache-setup
+
+      - name: 恢复 ccache 缓存
+        if: contains(format(',{0},', inputs.extra_features), ',ccache,')
+        uses: actions/cache/restore@v4
+        with:
+          path: /home/runner/.ccache
+          key: ccache-${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ steps.resolve.outputs.sub_level }}
+          restore-keys: |
+            ccache-${{ inputs.android_version }}-${{ inputs.kernel_version }}-
+            ccache-
 
       - name: 初始化并同步内核源码
         run: |
@@ -777,6 +798,40 @@ jobs:
         if: inputs.use_kernel_hygiene
         uses: ./.github/actions/kernel-hygiene
 
+      # ---- 额外功能（由 extra_features 文本开关控制，见 AGENTS.md） ----
+      - name: 内核版本检查绕过（bypass）
+        if: contains(format(',{0},', inputs.extra_features), ',bypass,')
+        uses: ./.github/actions/bypass-kernel
+        with:
+          version: ${{ inputs.android_version }}-${{ inputs.kernel_version }}
+
+      - name: 集成 DroidSpaces
+        if: contains(format(',{0},', inputs.extra_features), ',droidspaces,')
+        uses: ./.github/actions/droidspaces
+        with:
+          version: ${{ inputs.android_version }}-${{ inputs.kernel_version }}
+          kernel_version: ${{ inputs.kernel_version }}
+
+      - name: 集成 NoMount
+        if: contains(format(',{0},', inputs.extra_features), ',nomount,')
+        uses: ./.github/actions/nomount
+        with:
+          kernel_version: ${{ inputs.kernel_version }}
+
+      - name: 启用 BTF / eBPF / FUSE-BPF
+        if: contains(format(',{0},', inputs.extra_features), ',btf,')
+        uses: ./.github/actions/btf
+        with:
+          version: ${{ inputs.android_version }}-${{ inputs.kernel_version }}
+          kernel_version: ${{ inputs.kernel_version }}
+          sublevel: ${{ steps.resolve.outputs.sub_level }}
+
+      - name: 应用设备专属补丁（三星 / 小米 6.6）
+        if: contains(format(',{0},', inputs.extra_features), ',device_patches,')
+        uses: ./.github/actions/device-patches
+        with:
+          version: ${{ inputs.android_version }}-${{ inputs.kernel_version }}
+
       - name: 应用自定义内核选项
         if: inputs.custom_kernel_options != ''
         uses: ./.github/actions/set-kernel-config
@@ -876,6 +931,13 @@ jobs:
       # ============================================================
       # 9. KPM 镜像补丁（编译后）
       # ============================================================
+      - name: 保存 ccache 缓存
+        if: always() && contains(format(',{0},', inputs.extra_features), ',ccache,')
+        uses: actions/cache/save@v4
+        with:
+          path: /home/runner/.ccache
+          key: ccache-${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ steps.resolve.outputs.sub_level }}-${{ github.run_id }}
+
       - name: 校验管理器签名已注入内核
         if: inputs.upload_manager && inputs.ksu_variant != 'None' && env.MANAGER_HASH != ''
         shell: bash

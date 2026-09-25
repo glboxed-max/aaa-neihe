@@ -1,0 +1,49 @@
+# ===== 说明：应用设备专属补丁（三星 / 小米 6.6 GKI 的 WiFi/蓝牙修复） =====
+# 来源：WildKernels/GKI_KernelSU_SUSFS 的 actions/apply-device-patches
+# 依赖：kernel_patches 仓库（samsung/min_kdp）
+# 版本约束：仅 android15-6.6 需要；其它版本不处理
+name: 应用设备专属补丁（三星 / 小米 6.6）
+description: 为 android15-6.6 应用三星 min_kdp 与小米的 ABI 符号修复
+inputs:
+  version:
+    description: 内核配置版本（如 android15-6.6）
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: 三星 6.6：min_kdp 与 ABI 符号
+      if: inputs.version == 'android15-6.6'
+      shell: bash
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        set -euo pipefail
+
+        PATCH="${{ github.workspace }}/kernel_patches/samsung/min_kdp/add-min_kdp-symbols.patch"
+        MIN_KDP="${{ github.workspace }}/kernel_patches/samsung/min_kdp/min_kdp.c"
+        [ -f "$PATCH" ]   || { echo "::error::缺少三星 min_kdp 补丁: $PATCH"; exit 1; }
+        [ -f "$MIN_KDP" ] || { echo "::error::缺少三星 min_kdp 源码: $MIN_KDP"; exit 1; }
+
+        SYMBOL_LIST=android/abi_gki_aarch64_galaxy
+
+        # 先试刚性补丁（上游可能已漂移）
+        if patch -p1 --dry-run < "$PATCH" 2>/dev/null; then
+          patch -p1 --forward < "$PATCH"
+        else
+          echo "刚性补丁失败（上游漂移），改用幂等插入 .stg"
+          python3 "$GITHUB_WORKSPACE/.github/scripts/samsung_min_kdp_stg.py" android/abi_gki_aarch64.stg
+        fi
+
+        printf '%s\n' kdp_set_cred_non_rcu kdp_usecount_dec_and_test kdp_usecount_inc >> "$SYMBOL_LIST"
+        cp "$MIN_KDP" drivers/min_kdp.c
+        grep -Fqx 'obj-y += min_kdp.o' drivers/Makefile || printf '%s\n' 'obj-y += min_kdp.o' >> drivers/Makefile
+        echo "[+] 三星 min_kdp 处理完成"
+
+    - name: 小米 6.6：ABI 符号
+      if: inputs.version == 'android15-6.6'
+      shell: bash
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        set -euo pipefail
+        echo "device_find_any_child" >> android/abi_gki_aarch64_xiaomi
+        echo "[+] 小米 ABI 符号处理完成"

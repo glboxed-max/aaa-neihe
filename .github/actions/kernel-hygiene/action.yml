@@ -11,7 +11,7 @@ runs:
   steps:
     - name: 清理 "-dirty" 版本后缀
       shell: bash
-      working-directory: ${{ github.workspace }}/kernel
+      working-directory: ${{ env.KERNEL_ROOT }}
       run: |
         set -euo pipefail
         if [ -f "build/build.sh" ]; then
@@ -27,7 +27,7 @@ runs:
 
     - name: 移除受保护导出与受保护模块（仅 Bazel）
       shell: bash
-      working-directory: ${{ github.workspace }}/kernel
+      working-directory: ${{ env.KERNEL_ROOT }}
       run: |
         set -euo pipefail
 

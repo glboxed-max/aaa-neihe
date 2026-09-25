@@ -1,0 +1,113 @@
+# ===== 说明：启用 BTF / eBPF / FUSE-BPF =====
+# 来源：WildKernels/GKI_KernelSU_SUSFS 的 actions/btf
+# 版本对应：
+#   - android12-5.10：额外需要 libbpf 特性检测修复、resolve_btfids 链接修复、
+#     （sublevel 43）ANDROID_KABI_USE 宏修复、host dd、以及源码编译 pahole >=1.26
+#   - 其他版本：仅启用 CONFIG_DEBUG_INFO_BTF / eBPF / FUSE-BPF
+name: 启用 BTF（含 eBPF / FUSE-BPF）
+description: 启用 CONFIG_DEBUG_INFO_BTF 与 eBPF/FUSE-BPF；android12-5.10 额外应用必要修复
+inputs:
+  version:
+    description: 内核配置版本（如 android12-5.10）
+    required: true
+  kernel_version:
+    description: 内核版本（如 5.10）
+    required: true
+  sublevel:
+    description: 子版本号（如 43）
+    required: false
+    default: "0"
+
+runs:
+  using: composite
+  steps:
+    # ---------- android12-5.10 专属修复 ----------
+    - name: libbpf 特性检测修复（android12-5.10）
+      if: inputs.version == 'android12-5.10'
+      shell: bash
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        set -euo pipefail
+        patch -p1 -N --forward < "${{ github.action_path }}/patches/0001-libbpf-remove-feature-detection-BTF.patch" \
+          || echo "::warning::libbpf 特性检测补丁可能已应用"
+
+    - name: resolve_btfids 继承宿主链接器参数（android12-5.10）
+      if: inputs.version == 'android12-5.10'
+      shell: bash
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        set -euo pipefail
+        patch -p1 -N --forward < "${{ github.action_path }}/patches/0002-resolve_btfids-inherit-host-linker-flags.patch" \
+          || echo "::warning::resolve_btfids 链接参数补丁可能已应用"
+
+    - name: ANDROID_KABI_USE 宏修复（android12-5.10 / sublevel 43）
+      if: inputs.version == 'android12-5.10' && inputs.sublevel == '43'
+      shell: bash
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        set -euo pipefail
+        patch -p1 -N --forward < "${{ github.action_path }}/patches/0001-ANDROID-GKI-rework-the-ANDROID_KABI_USE-macro-to-not.patch" \
+          || echo "::warning::ANDROID_KABI_USE 补丁可能已应用"
+
+    - name: 为 hermetic 构建暴露宿主 dd（android12-5.10）
+      if: inputs.version == 'android12-5.10'
+      shell: bash
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        set -euo pipefail
+        # hermetic 工具链 PATH 里没有 /usr/bin，gen_btf 用到的 dd 会缺失
+        grep -q '^ADDITIONAL_HOST_TOOLS=' build.config.gki.aarch64 \
+          || echo 'ADDITIONAL_HOST_TOOLS="${ADDITIONAL_HOST_TOOLS} dd"' >> build.config.gki.aarch64
+
+    - name: 源码编译 pahole >=1.26（android12-5.10）
+      if: inputs.version == 'android12-5.10'
+      shell: bash
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: |
+        set -euo pipefail
+        # 5.10 自带的 pahole v1.19 会丢类型（xdp_buff 等），导致 resolve_btfids 失败
+        sudo apt-get install -y -qq cmake gcc libdw-dev libelf-dev zlib1g-dev dwarves
+        PAHOLE_SRC="$HOME/dwarves"
+        rm -rf "$PAHOLE_SRC"
+        for i in 1 2 3 4 5; do
+          git clone --depth 1 --branch v1.31 https://github.com/acmel/dwarves.git "$PAHOLE_SRC" && break
+          echo "dwarves 克隆第 $i 次失败，5s 后重试"; rm -rf "$PAHOLE_SRC"; sleep 5
+        done
+        mkdir -p "$PAHOLE_SRC/build" && cd "$PAHOLE_SRC/build"
+        cmake -D__LIB=lib -DCMAKE_INSTALL_PREFIX=/usr/local -DCMAKE_BUILD_TYPE=Release .. >/dev/null
+        make -j"$(nproc)" pahole
+        sudo make install pahole
+        sudo ldconfig
+        HERMETIC_PAHOLE="${{ env.KERNEL_ROOT }}/build/build-tools/path/linux-x86/pahole"
+        REAL_PAHOLE="$(command -v pahole)"
+        if [ -e "$HERMETIC_PAHOLE" ] || [ -L "$HERMETIC_PAHOLE" ]; then
+          printf '#!/bin/sh\nexec "%s" --skip_encoding_btf_enum64 --skip_encoding_btf_decl_tag --skip_encoding_btf_type_tag "$@"\n' "$REAL_PAHOLE" > "$HERMETIC_PAHOLE"
+          chmod +x "$HERMETIC_PAHOLE"
+          echo "已写入 pahole 包装脚本 -> $REAL_PAHOLE"
+        else
+          echo "::warning::$HERMETIC_PAHOLE 不存在，保持自带 pahole"
+        fi
+
+    # ---------- 配置 ----------
+    - name: 启用 BTF 配置
+      uses: ./.github/actions/set-kernel-config
+      with:
+        config_list: |
+          CONFIG_DEBUG_INFO_BTF=y
+
+    - name: 启用 eBPF 配置
+      uses: ./.github/actions/set-kernel-config
+      with:
+        config_list: |
+          CONFIG_BPF_EVENTS=y
+          CONFIG_KPROBE_EVENTS=y
+          CONFIG_UPROBES=y
+          CONFIG_UPROBE_EVENTS=y
+
+    - name: 启用 FUSE-BPF 配置
+      uses: ./.github/actions/set-kernel-config
+      with:
+        config_list: |
+          CONFIG_FUSE_FS=y
+          CONFIG_BPF_SYSCALL=y
+          CONFIG_FUSE_BPF=y

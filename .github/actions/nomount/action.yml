@@ -1,0 +1,61 @@
+# ===== 说明：集成 NoMount（VFS 挂载隐藏） =====
+# 来源：WildKernels/GKI_KernelSU_SUSFS 的 actions/nomount + maxsteeel/nomount
+# 作用：按上游 setup.sh 把 NoMount 集成进内核 fs/，并启用 CONFIG_NOMOUNT
+# 版本约束：NoMount 自带内核版本适配，直接使用上游脚本；此处仅做集成与配置
+name: 集成 NoMount
+description: 集成 NoMount 的 VFS 钩子并启用 CONFIG_NOMOUNT
+inputs:
+  kernel_version:
+    description: 内核版本（如 6.1）
+    required: false
+    default: ""
+  commit:
+    description: NoMount 固定 commit（留空=dev 分支最新）
+    required: false
+    default: ""
+
+runs:
+  using: composite
+  steps:
+    - name: 集成 NoMount
+      shell: bash
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: |
+        set -euo pipefail
+        KERNEL_DIR="${{ env.KERNEL_ROOT }}/common"
+        [ -d "$KERNEL_DIR/fs" ] || { echo "::error::内核源码目录不存在: $KERNEL_DIR"; exit 1; }
+
+        REQ="${{ inputs.commit }}"
+        if [ -z "$REQ" ]; then
+          echo "NoMount：未指定 commit，使用 dev 分支最新"
+          (
+            cd "$KERNEL_DIR"
+            curl -fsSL --retry 5 --retry-delay 5 --retry-all-errors \
+              https://raw.githubusercontent.com/maxsteeel/nomount/refs/heads/dev/kernel/setup.sh | bash -s dev
+          )
+        else
+          [[ "$REQ" =~ ^[0-9a-f]{40}$ ]] || { echo "::error::NoMount commit 需为完整 40 位 SHA"; exit 2; }
+          SETUP="${RUNNER_TEMP}/nomount-setup-${REQ}.sh"
+          curl --fail --location --silent --show-error --retry 5 --retry-delay 5 --retry-all-errors \
+            "https://raw.githubusercontent.com/maxsteeel/nomount/${REQ}/kernel/setup.sh" --output "$SETUP"
+          test -s "$SETUP"
+          chmod 0755 "$SETUP"
+          if [ ! -d "$KERNEL_DIR/NoMount" ]; then
+            git clone --no-checkout https://github.com/maxsteeel/nomount.git "$KERNEL_DIR/NoMount"
+          fi
+          git -C "$KERNEL_DIR/NoMount" fetch --depth=1 origin "$REQ"
+          git -C "$KERNEL_DIR/NoMount" checkout --detach --quiet "$REQ"
+          ( cd "$KERNEL_DIR" && "$SETUP" "$REQ" )
+        fi
+
+        if [ ! -L "$KERNEL_DIR/fs/nomount" ]; then
+          echo "::error::NoMount 集成失败：fs/nomount 符号链接不存在"
+          exit 1
+        fi
+        echo "NoMount commit: $(git -C "$KERNEL_DIR/NoMount" rev-parse HEAD)"
+
+    - name: 启用 NoMount 配置
+      uses: ./.github/actions/set-kernel-config
+      with:
+        config_list: |
+          CONFIG_NOMOUNT=y

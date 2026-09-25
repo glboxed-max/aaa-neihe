@@ -30,6 +30,7 @@ runs:
         VERSION="${{ inputs.android_version }}-${{ inputs.kernel_version }}"
         SUB="${{ inputs.sub_level }}"
         KP="${{ github.workspace }}/kernel_patches/common/bbrv3"
+        LOCAL="${{ github.action_path }}/patches"   # 本仓库自带补丁（补齐 kernel_patches 缺的版本）
         [ -d "$KP" ] || { echo "::warning::未找到 $KP，跳过 BBRv3"; exit 0; }
 
         apply() {  # 带容错：补丁失败只告警，不中断整条构建
@@ -41,7 +42,7 @@ runs:
 
         case "$VERSION" in
           android16-6.12)
-            echo "android16-6.12 暂无 BBRv3 补丁（与上游一致，跳过）"
+            apply "$LOCAL/0001-net-tcp-backport-BBRv3-to-android16-6.12.patch"
             ;;
           android15-6.6)
             apply "$KP/0001-net-tcp-backport-BBRv3-to-android15-6.6.patch"
@@ -49,11 +50,14 @@ runs:
           android14-6.1)
             apply "$KP/0001-net-tcp-backport-BBRv3-to-android14-6.1.patch"
             ;;
+          android14-5.15)
+            apply "$LOCAL/0001-net-tcp-backport-BBRv3-to-android14-5.15.patch"
+            ;;
           android13-5.15)
             apply "$KP/0001-net-tcp-backport-BBRv3-to-android13-5.15.patch"
-            # 早期子版本需要 tcp_snd_cwnd 辅助函数（kernel_patches 无此文件时告警跳过）
+            # 早期子版本需要 tcp_snd_cwnd 辅助函数
             if [ -n "$SUB" ] && [ "$SUB" != "X" ] && [ "$SUB" -le 43 ] 2>/dev/null; then
-              echo "sublevel=$SUB <= 43，尝试 0002 tcp_snd_cwnd 辅助补丁"
+              apply "$LOCAL/0002-net-tcp-add-tcp_snd_cwnd-and-tcp_snd_cwnd_set-helper-functions.patch"
             fi
             ;;
           android12-5.10|android13-5.10)

@@ -1,0 +1,73 @@
+# ===== 说明：集成 DroidSpaces（容器运行时） =====
+# 来源：WildKernels/GKI_KernelSU_SUSFS 的 actions/droidspaces
+# 版本对应：按 android-内核 版本选择 ravindu644/Droidspaces-OSS 的 GKI 补丁
+#   android16-6.12  -> 001.GKI-6.12-or-above-fix_sysvipc_kabi.patch
+#   其余 6.12 以下   -> 001.GKI-below-6.12-fix_sysvipc_kabi_6_7_8.patch（5.10 额外补 002）
+name: 集成 DroidSpaces
+description: 克隆并应用 Droidspaces-OSS 的 GKI 内核补丁，并启用所需配置
+inputs:
+  version:
+    description: 内核配置版本（如 android14-6.1）
+    required: true
+  kernel_version:
+    description: 内核版本（如 6.1）
+    required: true
+
+runs:
+  using: composite
+  steps:
+    - name: 克隆 Droidspaces-OSS
+      shell: bash
+      working-directory: ${{ github.workspace }}
+      run: |
+        set -euo pipefail
+        if [ -d Droidspaces-OSS/.git ]; then
+          echo "Droidspaces-OSS 已存在，跳过克隆"
+          exit 0
+        fi
+        git clone --depth=1 https://github.com/ravindu644/Droidspaces-OSS.git
+
+    - name: 应用 SYSVIPC kABI 修复补丁
+      shell: bash
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        set -euo pipefail
+        DS="${{ github.workspace }}/Droidspaces-OSS/Documentation/resources/kernel-patches/GKI"
+        VERSION="${{ inputs.version }}"
+
+        if [ "$VERSION" = "android16-6.12" ]; then
+          cp "$DS/kernel-6.12/001.GKI-6.12-or-above-fix_sysvipc_kabi.patch" ./
+          patch -p1 -F3 --forward < 001.GKI-6.12-or-above-fix_sysvipc_kabi.patch
+        else
+          cp "$DS/below-kernel-6.12/001.GKI-below-6.12-fix_sysvipc_kabi_6_7_8.patch" ./
+          patch -p1 -F3 --forward < 001.GKI-below-6.12-fix_sysvipc_kabi_6_7_8.patch
+          # 5.10 及更低还需要 POSIX mqueue 的 ABI padding 补丁
+          if [ "${{ inputs.kernel_version }}" = "5.10" ]; then
+            cp "$DS/below-kernel-6.12/002.5.10_or_lower_use_android_abi_padding_for_posix_mqueue.patch" ./
+            patch -p1 -F3 --forward < 002.5.10_or_lower_use_android_abi_padding_for_posix_mqueue.patch
+          fi
+        fi
+        echo "[+] DroidSpaces 补丁处理完成"
+
+    - name: 导出 6.12 所需 IPC 符号
+      if: inputs.version == 'android16-6.12'
+      shell: bash
+      working-directory: ${{ env.KERNEL_ROOT }}
+      run: |
+        set -euo pipefail
+        printf '\nEXPORT_SYMBOL_GPL(put_ipc_ns);\n'  >> common/ipc/namespace.c
+        printf '\nEXPORT_SYMBOL_GPL(init_ipc_ns);\n' >> common/ipc/msgutil.c
+
+    - name: 启用 DroidSpaces 配置
+      uses: ./.github/actions/set-kernel-config
+      with:
+        config_list: |
+          CONFIG_PID_NS=y
+          CONFIG_SYSVIPC=y
+          CONFIG_POSIX_MQUEUE=y
+          CONFIG_IPC_NS=y
+          CONFIG_DEVTMPFS=y
+          CONFIG_BINFMT_MISC=y
+          CONFIG_BINFMT_SCRIPT=y
+          CONFIG_BINFMT_ELF=y
+          CONFIG_USER_NS=y

@@ -1,0 +1,33 @@
+# ===== 说明：提交/PR 时自动校验工作流 YAML、shell、python 语法 =====
+# 来源：WildKernels/GKI_KernelSU_SUSFS 的 workflows/validate.yml
+name: 校验
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  validate:
+    name: 校验工作流 / shell / python
+    runs-on: ubuntu-latest
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 安装 Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.x"
+
+      - name: 安装 PyYAML
+        run: pip install pyyaml
+
+      - name: 校验工作流 YAML
+        run: python3 .github/scripts/validate_workflows.py
+
+      - name: 校验 shell 脚本
+        run: python3 .github/scripts/validate_shell.py
+
+      - name: 校验 python 语法
+        run: python3 .github/scripts/validate_python.py
