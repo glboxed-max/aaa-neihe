@@ -841,6 +841,11 @@ jobs:
         run: |
           set -euo pipefail
           cd "$ANYKERNEL3"
+          # 把重打包后的管理器 APK 一并放进刷机包（附带）
+          if compgen -G "$GITHUB_WORKSPACE/manager/*.apk" >/dev/null 2>&1; then
+            cp "$GITHUB_WORKSPACE"/manager/*.apk ./
+            echo "已把管理器 APK 附带到 AnyKernel3：$(ls ./*.apk)"
+          fi
           ZIP_NAME="${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ steps.resolve.outputs.sub_level }}-${{ steps.resolve.outputs.os_patch_level }}-${{ inputs.ksu_variant }}-AnyKernel3.zip"
           mv ../Image ./Image
           zip -r "../$ZIP_NAME" ./*
