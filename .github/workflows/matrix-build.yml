@@ -1,9 +1,9 @@
-name: 矩阵内核构建
+name: 批量内核构建
 
 # ============================================================
-#  一次触发，按“内核版本范围”扇出多个内核构建。
+#  一次触发，按“内核版本范围”扇出多个内核构建（默认构建全部子版本）。
 #  版本表：.github/matrix/versions.tsv
-#  例：kernel_scope=6.1 + sub_version_mode=全部子版本 → 只构建所有 6.1
+#  例：kernel_scope=6.1（默认全部子版本）→ 构建所有 6.1
 # ============================================================
 
 permissions:
@@ -34,13 +34,13 @@ on:
         options: [全部, android12, android13, android14, android15, android16]
         default: 全部
       sub_version_mode:
-        description: "子版本"
+        description: "子版本（默认：所选范围内的全部子版本）"
         required: true
         type: choice
         options:
-          - "最新子版本"
           - "全部子版本"
-        default: "最新子版本"
+          - "最新子版本"
+        default: "全部子版本"
 
       # ==================== KernelSU / 管理器 ====================
       ksu_variant:
