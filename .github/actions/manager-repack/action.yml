@@ -164,3 +164,13 @@ runs:
           echo "size=$SIZE"
           echo "hash=$HASH"
         } >> "$GITHUB_OUTPUT"
+
+    - name: 清理中间产物（只保留最终 APK）
+      shell: bash
+      run: |
+        set -euo pipefail
+        OUT="${{ inputs.out_dir }}"
+        rm -f "$OUT/original.apk" "$OUT/unsigned.apk"
+        rm -rf "$OUT/dec" "$OUT/signed" "$OUT/tools"
+        echo "管理器目录最终内容："
+        ls -la "$OUT"
