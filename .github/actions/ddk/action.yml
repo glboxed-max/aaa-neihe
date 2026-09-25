@@ -1,4 +1,5 @@
-name: Apply Xingguang DDK LSM
+# ===== 说明：应用 DDK 防格机 LSM =====
+name: 应用 DDK 防格机 LSM
 description: 应用 xingguang-ddk 防格机 LSM 补丁栈并启用内建 LSM
 
 inputs:
@@ -10,7 +11,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Apply DDK LSM
+    - name: 应用 DDK LSM 补丁
       shell: bash
       run: |
         set -euo pipefail
@@ -31,7 +32,7 @@ runs:
 
         test -f common/include/linux/xingguang_ddk.h || { echo "::error::DDK 头文件缺失"; exit 1; }
 
-    - name: Enable DDK config
+    - name: 启用 DDK 配置
       uses: ./.github/actions/set-kernel-config
       with:
         config_list: |

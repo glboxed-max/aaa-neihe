@@ -1,4 +1,5 @@
-name: Apply Networking Enhancements
+# ===== 说明：启用 IPSet / BBR / CIFS 等网络增强 =====
+name: 应用网络增强
 description: 启用 IPSet/防火墙、BBR 拥塞控制、qdisc、WireGuard、CIFS 等网络增强配置
 
 inputs:
@@ -10,7 +11,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Enable IP Set & firewall configs
+    - name: 启用 IP Set 与防火墙配置
       uses: ./.github/actions/set-kernel-config
       with:
         config_list: |
@@ -44,7 +45,7 @@ runs:
           CONFIG_IP6_NF_TARGET_HL=y
           CONFIG_IP6_NF_MATCH_HL=y
 
-    - name: Enable TCP congestion control (BBR) configs
+    - name: 启用 TCP 拥塞控制（BBR）配置
       uses: ./.github/actions/set-kernel-config
       with:
         config_list: |
@@ -60,7 +61,7 @@ runs:
           CONFIG_NET_SCH_CAKE=y
           CONFIG_WIREGUARD=y
 
-    - name: Keep tcp_bic built-in (avoid unlisted module)
+    - name: 将 tcp_bic 设为内建（避免模块未列出）
       shell: bash
       run: |
         set -euo pipefail
@@ -77,7 +78,7 @@ runs:
           echo "已内建 CONFIG_TCP_CONG_BIC=y（避免 tcp_bic.ko 未列入 module_outs）"
         fi
 
-    - name: Patch 5.10 ip_set max
+    - name: 修补 5.10 的 ip_set 上限
       if: inputs.kernel_version == '5.10'
       shell: bash
       working-directory: ${{ env.KERNEL_ROOT }}/common
@@ -87,7 +88,7 @@ runs:
           sed -i 's/CONFIG_IP_SET_MAX/65534/g' net/netfilter/ipset/ip_set_core.c
         fi
 
-    - name: Enable CIFS configs
+    - name: 启用 CIFS 配置
       uses: ./.github/actions/set-kernel-config
       with:
         config_list: |

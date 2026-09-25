@@ -1,9 +1,10 @@
-name: Add Root Manager (KernelSU variants)
+# ===== 说明：按变体/分支安装 KernelSU；校验 ref 存在性；可强制覆盖 KSU_VERSION =====
+name: 添加 Root 管理器（KernelSU 系列）
 description: 按变体/分支/自定义 ref 安装 KernelSU，并可选强制指定 KSU_VERSION
 
 inputs:
   variant:
-    description: "Official / SukiSU / ReSukiSU / Next / None"
+    description: "变体：Official / SukiSU / ReSukiSU / Next / None"
     required: true
   branch:
     description: "Stable(标准) / Dev(开发) / Latest(最新) / Other(其他/指定) / Custom(自定义)"
@@ -24,7 +25,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Resolve root ref
+    - name: 解析 root ref
       id: resolve
       shell: bash
       run: |
@@ -76,7 +77,7 @@ runs:
         } >> "$GITHUB_ENV"
         echo "ROOT_REF=$REF"
 
-    - name: Install KernelSU
+    - name: 安装 KernelSU
       if: inputs.variant != 'None'
       shell: bash
       run: |
@@ -136,7 +137,7 @@ runs:
         echo "KSU_COMMIT=$(git -C KernelSU rev-parse HEAD 2>/dev/null || echo unknown)" >> "$GITHUB_ENV"
         echo "KSU 最新提交: $KSU_LATEST_COMMIT_DATE"
 
-    - name: Override KSU_VERSION
+    - name: 覆盖 KSU_VERSION
       if: inputs.variant != 'None' && inputs.ksu_version != ''
       shell: bash
       run: |

@@ -1,4 +1,5 @@
-name: Setup Build Environment
+# ===== 说明：准备构建环境（导出路径、安装 repo 等） =====
+name: 准备构建环境
 description: 初始化 KERNEL_ROOT、全局路径变量并准备 repo 工具
 
 inputs:
@@ -12,7 +13,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Export build paths and install repo
+    - name: 导出构建路径并安装 repo
       shell: bash
       run: |
         set -euo pipefail

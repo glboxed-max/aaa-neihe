@@ -1,4 +1,5 @@
-name: Apply Re-Kernel Driver
+# ===== 说明：集成 Re-Kernel 驱动并启用配置 =====
+name: 应用 Re-Kernel 驱动
 description: 集成 Re:Kernel GKI Vendor Hooks 驱动
 
 inputs:
@@ -8,7 +9,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Integrate Re-Kernel
+    - name: 集成 Re-Kernel
       shell: bash
       run: |
         set -euo pipefail
@@ -80,7 +81,7 @@ runs:
           sed -i "s|^// #define ${VERSION_MACRO}$|#define ${VERSION_MACRO}|" "$mk" || true
         fi
 
-    - name: Enable Re-Kernel configs
+    - name: 启用 Re-Kernel 配置
       uses: ./.github/actions/set-kernel-config
       with:
         config_list: |

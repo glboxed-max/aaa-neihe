@@ -1,10 +1,11 @@
-name: Apply Baseband Guard (BBG)
+# ===== 说明：应用 Baseband Guard（BBG）防格机 =====
+name: 应用 BBG（基带保护）
 description: 下载并集成 Baseband-guard LSM，阻止对关键分区/设备节点的非法写入
 
 runs:
   using: composite
   steps:
-    - name: Install Baseband Guard
+    - name: 安装 BBG
       shell: bash
       run: |
         set -o pipefail
@@ -21,7 +22,7 @@ runs:
         done
         [ "$ok" = true ] || { echo "::error::Baseband-guard 下载失败"; exit 1; }
 
-    - name: Configure Baseband Guard
+    - name: 配置 BBG
       shell: bash
       run: |
         set -euo pipefail
@@ -34,7 +35,7 @@ runs:
         done
         [ -n "$BBG_DIR" ] && echo "BBG_COMMIT=$(git -C "$BBG_DIR" rev-parse --short HEAD)" >> "$GITHUB_ENV" || true
 
-    - name: Enable BBG config
+    - name: 启用 BBG 配置
       uses: ./.github/actions/set-kernel-config
       with:
         config_list: |

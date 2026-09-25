@@ -1,4 +1,5 @@
-name: Set Kernel Config
+# ===== 说明：向 gki_defconfig 追加/覆盖 Kconfig 选项 =====
+name: 设置内核配置
 description: 幂等地向 gki_defconfig 追加或覆盖配置项（存在则替换，不存在则追加）
 
 inputs:
@@ -9,7 +10,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Patch gki_defconfig
+    - name: 修改 gki_defconfig
       shell: bash
       env:
         CONFIG_LIST: ${{ inputs.config_list }}

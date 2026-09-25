@@ -1,9 +1,10 @@
-name: Repack Manager APK
+# ===== 说明：下载官方管理器 APK -> 只改 applicationId -> 重签名 -> 计算 KernelSU size/hash =====
+name: 重打包管理器 APK
 description: 下载对应变体的管理器 APK，改成指定包名并重签名，输出 size/hash（KernelSU expected 值）
 
 inputs:
   variant:
-    description: "SukiSU / Official / ReSukiSU / Next"
+    description: "变体：SukiSU / Official / ReSukiSU / Next"
     required: true
   ksu_ref:
     description: "要匹配的分支/Tag（可为空）"

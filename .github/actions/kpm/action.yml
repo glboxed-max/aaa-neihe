@@ -1,4 +1,5 @@
-name: Apply KPM Image Patch
+# ===== 说明：为内核镜像打 KPM 补丁 =====
+name: 应用 KPM 镜像补丁
 description: 编译完成后对 Image 执行 KPM patch_linux（仅 SukiSU/ReSukiSU）
 
 inputs:
@@ -13,7 +14,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Patch Image with KPM
+    - name: 用 KPM 修补内核镜像
       shell: bash
       run: |
         set -euo pipefail

@@ -1,4 +1,5 @@
-name: Apply SUSFS
+# ===== 说明：按内核版本应用 SUSFS 补丁（版本锁定 + --fuzz=3，含 VMA_PAD/uniproton 处理） =====
+name: 应用 SUSFS
 description: 应用 susfs4ksu 主补丁、版本相关修复补丁与 Unicode 绕过修复，并写入 SUSFS 配置
 
 inputs:
@@ -19,7 +20,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Apply SUSFS patch
+    - name: 应用 SUSFS patch
       shell: bash
       run: |
         set -euo pipefail
@@ -189,7 +190,7 @@ runs:
           fi
         fi
 
-    - name: Apply Unicode bypass fix
+    - name: 应用 Unicode 绕过修复
       shell: bash
       run: |
         set -euo pipefail
@@ -209,7 +210,7 @@ runs:
           echo "::warning::未找到 Unicode 修复补丁: $NAME"
         fi
 
-    - name: Enable SUSFS configs
+    - name: 启用 SUSFS 配置
       uses: ./.github/actions/set-kernel-config
       with:
         config_list: |

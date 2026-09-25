@@ -693,7 +693,7 @@ jobs:
           android_version: ${{ inputs.android_version }}
           kernel_version: ${{ inputs.kernel_version }}
 
-      - name: NTsync
+      - name: NTSync 驱动
         if: inputs.use_ntsync
         uses: ./.github/actions/ntsync
         with:

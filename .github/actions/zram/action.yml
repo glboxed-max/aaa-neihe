@@ -1,4 +1,5 @@
-name: Apply ZRAM Enhancements
+# ===== 说明：升级 LZ4 并启用 ZRAM 增强/完整算法（lz4/zstd 等） =====
+name: 应用 ZRAM 增强
 description: 升级 LZ4（含 NEON），可选集成完整 LZ4K/LZ4KD/LZ4K_OPLUS 算法，并写入 ZRAM 配置（6.12 自动跳过 legacy 算法）
 
 inputs:
@@ -18,7 +19,7 @@ inputs:
 runs:
   using: composite
   steps:
-    - name: Upgrade LZ4 and apply algorithm stack
+    - name: 升级 LZ4 并应用算法栈
       shell: bash
       run: |
         set -uo pipefail
@@ -72,7 +73,7 @@ runs:
           patch -p1 -F 3 < "$p" || echo "::warning::$p 应用失败（可能已应用或上下文不匹配）"
         done
 
-    - name: Enable ZRAM configs
+    - name: 启用 ZRAM 配置
       uses: ./.github/actions/set-kernel-config
       with:
         config_list: |
@@ -80,7 +81,7 @@ runs:
           CONFIG_ZRAM=y
           CONFIG_CRYPTO_LZO=y
 
-    - name: Enable ZRAM algorithm configs
+    - name: 启用 ZRAM 算法配置
       shell: bash
       run: |
         set -euo pipefail

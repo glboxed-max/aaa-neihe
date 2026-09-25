@@ -1,3 +1,4 @@
+# ===== 说明：取用源码构建的管理器（Release 下载 + 校验包名 + 计算 size/hash） =====
 name: 取用源码构建的管理器
 description: >-
   从本仓库 Release 下载「源码构建」的管理器 APK（tag: manager-<变体>-<短sha>），
@@ -12,7 +13,7 @@ inputs:
     description: 访问 Releases 的 token
     required: true
   variant:
-    description: "SukiSU / Official / ReSukiSU / Next"
+    description: "变体：SukiSU / Official / ReSukiSU / Next"
     required: true
   ksu_commit:
     description: 内核实际使用的 KSU commit（用于精确匹配管理器版本）
