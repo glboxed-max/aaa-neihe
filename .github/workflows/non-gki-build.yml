@@ -113,7 +113,7 @@ on:
         description: "构建完成后发布到 Releases"
         required: false
         type: boolean
-        default: false
+        default: true
 
   workflow_call:
     inputs:

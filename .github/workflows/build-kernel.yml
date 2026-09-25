@@ -141,7 +141,7 @@ on:
         description: "构建完成后发布到 Releases"
         required: false
         type: boolean
-        default: false
+        default: true
       upload_manager:
         description: "同时下载并上传对应版本的管理器 APK"
         required: false
@@ -239,7 +239,7 @@ on:
       publish_release:
         required: false
         type: boolean
-        default: false
+        default: true
       upload_manager:
         required: false
         type: boolean
@@ -963,7 +963,7 @@ jobs:
         if: inputs.upload_manager && inputs.ksu_variant != 'None' && env.MANAGER_APK != ''
         uses: actions/upload-artifact@v4
         with:
-          name: manager-${{ inputs.ksu_variant }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ steps.resolve.outputs.sub_level }}
+          name: 管理器-${{ inputs.ksu_variant }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ steps.resolve.outputs.sub_level }}
           path: manager/*.apk
           if-no-files-found: warn
           retention-days: 7

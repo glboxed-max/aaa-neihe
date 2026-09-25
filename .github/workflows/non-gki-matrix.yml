@@ -43,7 +43,7 @@ on:
         description: "各目标完成后发布到 Releases"
         required: false
         type: boolean
-        default: false
+        default: true
 
 jobs:
   prepare:

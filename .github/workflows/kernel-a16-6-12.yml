@@ -1,4 +1,4 @@
-﻿name: 内核构建 - Android 16 (6.12)
+name: 内核构建 - Android 16 (6.12)
 
 # ============================================================
 #  Android 16 / 内核 6.12 专用入口（仿 ABK 的单版本工作流）
@@ -128,7 +128,7 @@ on:
         description: "构建完成后发布到 Releases"
         required: false
         type: boolean
-        default: false
+        default: true
 
 jobs:
   prepare:
