@@ -49,11 +49,23 @@ runs:
         fi
 
         cd "$KERNEL_ROOT/common"
-        patch -p1 < "50_add_susfs_in_gki-${A}-${K}.patch" || true
+        patch -p1 --fuzz=3 < "50_add_susfs_in_gki-${A}-${K}.patch" || true
 
         # 早失败：若变体/分支其实不支持 SUSFS，CONFIG_KSU_SUSFS 不会被 Kconfig 声明；
         # 继续下去会在编译的配置校验阶段报一堆 “actual ''” 的莫名错误。
-        if ! grep -rqE 'config[[:space:]]+KSU_SUSFS' --include=Kconfig . 2>/dev/null; then
+        # 注意：SUSFS 的 Kconfig 在 KernelSU 源码里（软链到 drivers/kernelsu/Kconfig），
+        # 用 grep -r 不会跟随软链，所以要直接查 KSU 源码目录。
+        SUSFS_KCONFIG_OK=false
+        for d in "$KERNEL_ROOT"/KernelSU/kernel "$KERNEL_ROOT"/KernelSU-Next/kernel; do
+          if [ -d "$d" ] && grep -rqE 'config[[:space:]]+KSU_SUSFS' "$d" 2>/dev/null; then
+            SUSFS_KCONFIG_OK=true; break
+          fi
+        done
+        if [ "$SUSFS_KCONFIG_OK" != true ] \
+           && timeout 40 grep -RqE 'config[[:space:]]+KSU_SUSFS' --include=Kconfig "$KERNEL_ROOT/common" 2>/dev/null; then
+          SUSFS_KCONFIG_OK=true
+        fi
+        if [ "$SUSFS_KCONFIG_OK" != true ]; then
           echo "::error::SUSFS 未生效：CONFIG_KSU_SUSFS 未被 Kconfig 声明。"
           echo "::error::常见原因：SukiSU 用了 main/dev（不内置 SUSFS）而非 builtin；或 SUSFS 补丁没打上。"
           exit 1
