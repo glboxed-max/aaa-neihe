@@ -154,10 +154,9 @@ runs:
             echo "已为 $f 补 #include <linux/susfs_def.h>"
           fi
         }
-        for f in fs/namespace.c fs/proc/base.c fs/exec.c fs/open.c fs/namei.c \
-                 fs/stat.c fs/read_write.c fs/proc/task_mmu.c fs/proc_namespace.c; do
-          ensure_susfs_include "$f"
-        done
+        while IFS= read -r f; do
+          [ -n "$f" ] && ensure_susfs_include "$f"
+        done < <(grep -rlE 'susfs_is_current_ksu_domain|DEFAULT_KSU_MNT_ID|DEFAULT_KSU_MNT_GROUP_ID|susfs_is_sdcard_android_data_not_decrypted|VFSMOUNT_MNT_FLAGS_KSU_UNSHARED_MNT|susfs_is_current_proc_umounted_for_zygote_next|CL_COPY_MNT_NS' --include='*.c' . 2>/dev/null || true)
 
     - name: Apply Unicode bypass fix
       shell: bash
