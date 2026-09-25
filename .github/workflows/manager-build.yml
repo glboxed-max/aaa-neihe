@@ -2,32 +2,31 @@ name: 管理器源码构建
 
 # ============================================================
 #  从源码用 Gradle 构建 KSU 管理器 APK（对齐 SukiSU 官方 build-manager.yml）
+#  支持【多变体并行】：一次运行同时构建 SukiSU / ReSukiSU / Official / Next
 #
 #  关键点：
-#   - applicationId 通过 -PKSU_PACKAGE_NAME=<包名> 指定；
-#     namespace / 类包名保持 com.sukisu.ultra 不变 -> JNI 符号 Java_com_sukisu_ultra_* 不受影响（不会闪退）。
-#   - libksud.so：优先从源码编译 ksud（同一 commit，版本对应）；
-#     失败则回退到从官方 Release 的 APK 中提取（保证仍可构建）。
-#   - 用仓库内置固定 keystore 签名 -> 与内核注入的 size/hash 配对，跨运行可拿 root。
-#   - 产物：<包名>.apk + manager-info.env，并发布到 Release（tag: manager-<变体>-<短sha>）。
+#   - applicationId 通过 -PKSU_PACKAGE_NAME=<包名> 指定（仅当该变体支持时）；
+#     namespace / 类包名保持原样 -> JNI 符号不受影响（不会闪退）。
+#   - libksud.so：优先从源码编译 ksud（同一 commit）；失败回退官方 APK 提取。
+#   - 用仓库内置固定 keystore 签名 -> 与内核注入的 size/hash 配对。
+#   - 每个变体单独出产物与 Release（tag: manager-<变体>-<短sha>）。
 # ============================================================
 
 on:
   workflow_dispatch:
     inputs:
-      ksu_variant:
-        description: "KSU 变体"
+      variants:
+        description: "变体（逗号分隔，可多选并行）：SukiSU,ReSukiSU,Official,Next"
         required: true
-        type: choice
-        options: [SukiSU, ReSukiSU, Official, Next]
-        default: SukiSU
+        type: string
+        default: "SukiSU,ReSukiSU,Official,Next"
       ksu_ref:
-        description: "分支 / Tag / commit（留空 = 默认分支）"
+        description: "分支 / Tag / commit（留空 = 各仓库默认分支）"
         required: false
         type: string
         default: ""
       package:
-        description: "管理器包名（applicationId）"
+        description: "管理器包名（applicationId，仅支持的变体生效）"
         required: true
         type: string
         default: "w.fkiu"
@@ -37,7 +36,7 @@ on:
         type: string
         default: "aaa-neihe"
       build_ksud:
-        description: "从源码编译 ksud（更严格的版本对应；关则从官方 APK 提取 libksud.so）"
+        description: "从源码编译 ksud（更严格的版本对应）"
         required: false
         type: boolean
         default: true
@@ -51,56 +50,103 @@ permissions:
   contents: write
 
 jobs:
-  build-manager:
-    name: "${{ inputs.ksu_variant }} -> ${{ inputs.package }}"
+  # ============================================================
+  # 1. 解析变体列表 -> 构建矩阵
+  # ============================================================
+  prepare:
+    name: 生成变体矩阵
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.gen.outputs.matrix }}
+      count: ${{ steps.gen.outputs.count }}
+    steps:
+      - name: 生成矩阵
+        id: gen
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir -p meta
+          printf '%s' '${{ inputs.variants }}' | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' | grep -v '^$' | sort -u > var.txt
+          [ -s var.txt ] || { echo "::error::variants 为空"; exit 1; }
+
+          JSON="[]"
+          while IFS= read -r V; do
+            # 默认分支/仓库映射（与 root-setup 一致）
+            case "$V" in
+              SukiSU)   REPO="SukiSU-Ultra/SukiSU-Ultra"; DIR="SukiSU";   DEFAULT_REF="builtin" ;;
+              ReSukiSU) REPO="ReSukiSU/ReSukiSU";         DIR="ReSukiSU"; DEFAULT_REF="main" ;;
+              Official) REPO="tiann/KernelSU";            DIR="KernelSU"; DEFAULT_REF="main" ;;
+              Next)     REPO="KernelSU-Next/KernelSU-Next"; DIR="KernelSU-Next"; DEFAULT_REF="dev" ;;
+              *) echo "::error::不支持的变体 $V（支持：SukiSU,ReSukiSU,Official,Next）"; exit 1 ;;
+            esac
+            JSON=$(echo "$JSON" | jq -c --arg v "$V" --arg r "$REPO" --arg d "$DIR" --arg f "$DEFAULT_REF" \
+              '. + [{"variant":$v,"repo":$r,"dir":$d,"default_ref":$f}]')
+          done < var.txt
+
+          echo "matrix=$JSON" >> "$GITHUB_OUTPUT"
+          echo "count=$(echo "$JSON" | jq 'length')" >> "$GITHUB_OUTPUT"
+          echo "变体矩阵：$(echo "$JSON" | jq -c '[.[].variant]')"
+
+  # ============================================================
+  # 2. 逐变体并行构建
+  # ============================================================
+  build:
+    name: "${{ matrix.v.variant }} -> ${{ inputs.package }}"
+    needs: prepare
+    strategy:
+      fail-fast: false
+      matrix:
+        v: ${{ fromJson(needs.prepare.outputs.matrix) }}
     runs-on: ubuntu-latest
     timeout-minutes: 150
     steps:
       - name: 检出仓库
         uses: actions/checkout@v4
 
-      - name: 解析变体仓库
-        id: var
+      - name: 准备目录
         shell: bash
-        run: |
-          set -euo pipefail
-          case "${{ inputs.ksu_variant }}" in
-            SukiSU)   REPO="SukiSU-Ultra/SukiSU-Ultra"; DIR="SukiSU" ;;
-            ReSukiSU) REPO="ReSukiSU/ReSukiSU";         DIR="ReSukiSU" ;;
-            Official) REPO="tiann/KernelSU";            DIR="KernelSU" ;;
-            Next)     REPO="KernelSU-Next/KernelSU-Next"; DIR="KernelSU-Next" ;;
-            *) echo "::error::不支持的变体 ${{ inputs.ksu_variant }}"; exit 1 ;;
-          esac
-          echo "repo=$REPO" >> "$GITHUB_OUTPUT"
-          echo "dir=$DIR" >> "$GITHUB_OUTPUT"
+        run: mkdir -p meta
 
       - name: 克隆 KSU 源码（对应版本）
         id: clone
         shell: bash
         run: |
           set -euo pipefail
-          REPO="${{ steps.var.outputs.repo }}"
-          DIR="${{ steps.var.outputs.dir }}"
+          REPO="${{ matrix.v.repo }}"
+          DIR="${{ matrix.v.dir }}"
           REF="${{ inputs.ksu_ref }}"
+          [ -z "$REF" ] && REF="${{ matrix.v.default_ref }}"
 
           git clone --filter=blob:none --single-branch "https://github.com/$REPO.git" "$DIR"
-          if [ -n "$REF" ]; then
-            cd "$DIR"
-            if git rev-parse --verify --quiet "origin/$REF" >/dev/null; then
-              git checkout "$REF"
-            elif git rev-parse --verify --quiet "refs/tags/$REF" >/dev/null; then
-              git checkout "refs/tags/$REF"
-            else
-              git fetch --filter=blob:none origin "$REF"
-              git checkout FETCH_HEAD
-            fi
-            cd ..
+          cd "$DIR"
+          if git rev-parse --verify --quiet "origin/$REF" >/dev/null; then
+            git checkout "$REF"
+          elif git rev-parse --verify --quiet "refs/tags/$REF" >/dev/null; then
+            git checkout "refs/tags/$REF"
+          elif git fetch --filter=blob:none origin "$REF" >/dev/null 2>&1; then
+            git checkout FETCH_HEAD
+          else
+            echo "::warning::ref '$REF' 在 $REPO 中不存在，退回默认分支"
           fi
-
+          cd ..
           COMMIT="$(git -C "$DIR" rev-parse HEAD)"
           echo "commit=$COMMIT" >> "$GITHUB_OUTPUT"
           echo "short=$(printf '%.12s' "$COMMIT")" >> "$GITHUB_OUTPUT"
           echo "已选 $REPO @ $COMMIT"
+
+      - name: 检测是否支持自定义包名（KSU_PACKAGE_NAME）
+        id: pkg
+        shell: bash
+        run: |
+          set -euo pipefail
+          DIR="${{ matrix.v.dir }}"
+          if grep -rq 'KSU_PACKAGE_NAME' "$DIR/manager" 2>/dev/null; then
+            echo "support=true" >> "$GITHUB_OUTPUT"
+            echo "该变体支持 -PKSU_PACKAGE_NAME"
+          else
+            echo "support=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::${{ matrix.v.variant }} 不支持 KSU_PACKAGE_NAME，将使用其默认包名"
+          fi
 
       - name: 安装 Java 21
         uses: actions/setup-java@v4
@@ -113,8 +159,6 @@ jobs:
 
       - name: 准备 Android SDK（接受许可；缺失组件交给 AGP 自动下载）
         shell: bash
-        # 说明：GitHub runner 自带 Android SDK 且已预接受许可，缺的 platform/build-tools/NDK 由 AGP 自动下载。
-        # 不用 android-actions/setup-android —— 它在新版 SDK 上执行 `sdkmanager tools` 会失败（实测）。
         run: |
           set -euo pipefail
           SDK="${ANDROID_HOME:-${ANDROID_SDK_ROOT:-}}"
@@ -123,8 +167,6 @@ jobs:
             for SDKM in "$SDK/cmdline-tools/latest/bin/sdkmanager" "$SDK/cmdline-tools/16.0/bin/sdkmanager"; do
               if [ -x "$SDKM" ]; then yes | "$SDKM" --licenses >/dev/null 2>&1 || true; break; fi
             done
-            echo "platforms:";   ls "$SDK/platforms"   2>/dev/null || true
-            echo "build-tools:"; ls "$SDK/build-tools" 2>/dev/null || true
           fi
 
       - name: 安装 NDK r29（供 ksud 交叉编译）
@@ -139,12 +181,13 @@ jobs:
         id: ksud
         continue-on-error: true
         shell: bash
-        working-directory: ${{ steps.var.outputs.dir }}
+        working-directory: ${{ matrix.v.dir }}
         env:
           ANDROID_NDK_HOME: ${{ steps.setup-ndk.outputs.ndk-path }}
           KSU_PACKAGE_NAME: ${{ inputs.package }}
         run: |
           set -euo pipefail
+          [ -f .github/scripts/setup-rust-build.sh ] || { echo "::warning::无 ksud 构建脚本，跳过"; exit 0; }
           rustup update stable || true
           for T in aarch64-linux-android x86_64-linux-android armv7-linux-androideabi; do
             rustup target add "$T" || true
@@ -157,11 +200,10 @@ jobs:
           echo "ksud 编译完成"
 
       - name: 准备 libksud.so
-        id: libksud
         shell: bash
         run: |
           set -euo pipefail
-          DIR="${{ steps.var.outputs.dir }}"
+          DIR="${{ matrix.v.dir }}"
           JNI="$DIR/manager/app/src/main/jniLibs"
           mkdir -p "$JNI/arm64-v8a" "$JNI/armeabi-v7a" "$JNI/x86_64"
 
@@ -171,123 +213,115 @@ jobs:
             [ -f "$DIR/target/x86_64-linux-android/release/ksud" ]  && cp -f "$DIR/target/x86_64-linux-android/release/ksud"  "$JNI/x86_64/libksud.so" || true
             [ -f "$DIR/target/armv7-linux-androideabi/release/ksud" ] && cp -f "$DIR/target/armv7-linux-androideabi/release/ksud" "$JNI/armeabi-v7a/libksud.so" || true
             ok=1
-            echo "✅ 使用源码编译的 ksud 作为 libksud.so"
+            echo "✅ 使用源码编译的 ksud"
           fi
-
           if [ "$ok" = "0" ]; then
-            echo "::warning::源码 ksud 不可用，回退到从官方 Release 的 APK 提取 libksud.so"
-            REPO="${{ steps.var.outputs.repo }}"
-            mkdir -p /tmp/mgr-official
+            echo "::warning::源码 ksud 不可用，回退到官方 Release 的 APK 提取 libksud.so"
+            REPO="${{ matrix.v.repo }}"
             curl -fsSL -H "Authorization: Bearer ${{ github.token }}" -H "Accept: application/vnd.github+json" \
               "https://api.github.com/repos/$REPO/releases/latest" -o /tmp/rel.json
             URL="$(jq -r '.assets[]? | select(.name|endswith(".apk")) | .browser_download_url' /tmp/rel.json | head -n1)"
-            [ -n "$URL" ] && [ "$URL" != "null" ] || { echo "::error::官方 Release 未提供 APK"; exit 1; }
+            [ -n "$URL" ] && [ "$URL" != "null" ] || { echo "::warning::官方 Release 无 APK，跳过 libksud"; exit 0; }
             curl -fsSL -o /tmp/official.apk "$URL"
             for ABI in arm64-v8a armeabi-v7a x86_64; do
               unzip -o -j /tmp/official.apk "lib/$ABI/libksud.so" -d "$JNI/$ABI" >/dev/null 2>&1 || true
             done
-            ls -lh "$JNI"/*/libksud.so
+            ls -lh "$JNI"/*/libksud.so 2>/dev/null || true
           fi
 
       - name: 配置签名（仓库内置固定 keystore）
         shell: bash
         run: |
           set -euo pipefail
-          DIR="${{ steps.var.outputs.dir }}"
+          DIR="${{ matrix.v.dir }}"
           PASS="${{ vars.MANAGER_KEYSTORE_PASS || 'android' }}"
           if [ -f "$GITHUB_WORKSPACE/.github/manager/ks.jks.b64" ]; then
             base64 -d "$GITHUB_WORKSPACE/.github/manager/ks.jks.b64" > /tmp/manager.jks
-            ALIAS="k"
             echo "使用仓库内置固定 keystore"
           else
             keytool -genkeypair -keystore /tmp/manager.jks -alias k -keyalg RSA -keysize 2048 \
-              -validity 10000 -storepass "$PASS" -keypass "$PASS" -dname "CN=${{ inputs.package }}" >/dev/null 2>&1
-            ALIAS="k"
-            echo "::warning::未找到内置 keystore，本次使用临时随机 keystore"
+              -validity 10000 -storepass "$PASS" -keypass "$PASS" -dname "CN=aaa-neihe" >/dev/null 2>&1
+            echo "::warning::未找到内置 keystore，使用临时 keystore"
           fi
           {
             echo "KEYSTORE_FILE=/tmp/manager.jks"
             echo "KEYSTORE_PASSWORD=$PASS"
-            echo "KEY_ALIAS=$ALIAS"
+            echo "KEY_ALIAS=k"
             echo "KEY_PASSWORD=$PASS"
           } >> "$DIR/manager/gradle.properties"
-          # 也传给 repack_apk.py 使用
-          echo "SIGN_KEYSTORE_FILE=/tmp/manager.jks" >> "$GITHUB_ENV"
-          echo "SIGN_KEY_ALIAS=$ALIAS" >> "$GITHUB_ENV"
-          echo "SIGN_KEYSTORE_PASSWORD=$PASS" >> "$GITHUB_ENV"
-          echo "SIGN_KEY_PASSWORD=$PASS" >> "$GITHUB_ENV"
 
-      - name: Gradle 构建管理器（applicationId = 自定义包名）
+      - name: Gradle 构建管理器
         shell: bash
-        working-directory: ${{ steps.var.outputs.dir }}/manager
+        working-directory: ${{ matrix.v.dir }}/manager
         env:
           KSU_PACKAGE_NAME: ${{ inputs.package }}
         run: |
           set -euo pipefail
           chmod +x ./gradlew
-          ./gradlew :app:assembleRelease --no-daemon --stacktrace \
-            -PKSU_PACKAGE_NAME="${{ inputs.package }}" \
-            -PKSU_NAME="${{ inputs.manager_name }}"
+          EXTRA_ARGS=""
+          if [ "${{ steps.pkg.outputs.support }}" = "true" ]; then
+            EXTRA_ARGS="-PKSU_PACKAGE_NAME=${{ inputs.package }} -PKSU_NAME=${{ inputs.manager_name }}"
+          fi
+          ./gradlew :app:assembleRelease --no-daemon --stacktrace $EXTRA_ARGS
 
-      - name: 收集 / 校验 / 签名（必要时重签）
+      - name: 收集 / 校验 / 签名
         id: out
         shell: bash
         run: |
           set -euo pipefail
-          DIR="${{ steps.var.outputs.dir }}"
+          DIR="${{ matrix.v.dir }}"
           PKG="${{ inputs.package }}"
-          OUT_APK="$PWD/$PKG.apk"
+          SUPPORT="${{ steps.pkg.outputs.support }}"
 
           SRC_APK="$(ls -t "$DIR"/manager/app/build/outputs/apk/release/*.apk 2>/dev/null | head -n1 || true)"
           [ -n "$SRC_APK" ] || { echo "::error::未找到 Gradle 产物"; exit 1; }
-          cp "$SRC_APK" "$OUT_APK"
 
-          # 若插件未签名（没有 v2 签名块），用 apksigner 重签
-          if ! python3 "$GITHUB_WORKSPACE/.github/tools/get_apk_sign.py" "$OUT_APK" >/dev/null 2>&1; then
-            echo "未检测到 v2 签名，使用 apksigner 重签"
+          cp "$SRC_APK" "./out.apk"
+          if ! python3 "$GITHUB_WORKSPACE/.github/tools/get_apk_sign.py" ./out.apk >/dev/null 2>&1; then
             BT="$(ls -d "$ANDROID_HOME"/build-tools/* 2>/dev/null | sort -V | tail -n1)"
-            "$BT/zipalign" -f -p 4 "$OUT_APK" "$OUT_APK.aligned"
+            "$BT/zipalign" -f -p 4 ./out.apk ./out.aligned
             "$BT/apksigner" sign --ks /tmp/manager.jks --ks-key-alias k \
               --ks-pass "pass:${{ vars.MANAGER_KEYSTORE_PASS || 'android' }}" \
               --key-pass "pass:${{ vars.MANAGER_KEYSTORE_PASS || 'android' }}" \
-              --out "$OUT_APK.signed" "$OUT_APK.aligned"
-            mv -f "$OUT_APK.signed" "$OUT_APK"
-            rm -f "$OUT_APK.aligned"
+              --out ./out.signed ./out.aligned
+            mv -f ./out.signed ./out.apk; rm -f ./out.aligned
           fi
 
-          # 校验包名
+          # 实际包名
           BT="$(ls -d "$ANDROID_HOME"/build-tools/* 2>/dev/null | sort -V | tail -n1)"
-          BADGE="$("$BT/aapt2" dump badging "$OUT_APK" | head -n1 || true)"
-          echo "badging: $BADGE"
-          echo "$BADGE" | grep -q "name='$PKG'" || { echo "::error::包名不是 $PKG"; exit 1; }
-          echo "✅ 包名 = $PKG"
+          APK_PKG="$("$BT/aapt2" dump badging ./out.apk | sed -n "s/^package: name='\([^']*\)'.*/\1/p" | head -n1)"
+          echo "实际包名: $APK_PKG"
+          if [ "$SUPPORT" = "true" ]; then
+            [ "$APK_PKG" = "$PKG" ] || { echo "::error::包名不符，期望 $PKG 实际 $APK_PKG"; exit 1; }
+          else
+            [ "$APK_PKG" = "$PKG" ] || echo "::warning::${{ matrix.v.variant }} 不支持自定义包名，实际为 $APK_PKG"
+          fi
+          FINAL_PKG="$APK_PKG"
 
-          # 确认类包名仍是 com.sukisu.ultra（JNI 依赖），且含 libksud.so
-          unzip -l "$OUT_APK" | grep -q 'lib/arm64-v8a/libksud.so' || echo "::warning::APK 内未含 libksud.so(arm64)"
-          echo "✅ 已确认 libksud.so"
-
-          SIGN="$(python3 "$GITHUB_WORKSPACE/.github/tools/get_apk_sign.py" "$OUT_APK")"
-          echo "$SIGN"
+          SIGN="$(python3 "$GITHUB_WORKSPACE/.github/tools/get_apk_sign.py" ./out.apk)"
           SIZE="$(printf '%s\n' "$SIGN" | sed -n 's/^SIZE=//p')"
           HASH="$(printf '%s\n' "$SIGN" | sed -n 's/^HASH=//p')"
           [ -n "$SIZE" ] && [ -n "$HASH" ] || { echo "::error::签名解析失败"; exit 1; }
 
+          mv ./out.apk "./${FINAL_PKG}.apk"
           {
-            echo "MANAGER_APK=$PKG.apk"
-            echo "MANAGER_PACKAGE=$PKG"
+            echo "MANAGER_APK=${FINAL_PKG}.apk"
+            echo "MANAGER_PACKAGE=${FINAL_PKG}"
             echo "MANAGER_SIZE=$SIZE"
             echo "MANAGER_HASH=$HASH"
+            echo "MANAGER_VARIANT=${{ matrix.v.variant }}"
             echo "MANAGER_KSU_COMMIT=${{ steps.clone.outputs.commit }}"
           } | tee manager-info.env
           echo "size=$SIZE" >> "$GITHUB_OUTPUT"
           echo "hash=$HASH" >> "$GITHUB_OUTPUT"
+          echo "pkg=$FINAL_PKG" >> "$GITHUB_OUTPUT"
 
       - name: 上传产物
         uses: actions/upload-artifact@v4
         with:
-          name: 管理器源码-${{ inputs.ksu_variant }}-${{ inputs.package }}
+          name: 管理器源码-${{ matrix.v.variant }}-${{ steps.out.outputs.pkg }}
           path: |
-            ${{ inputs.package }}.apk
+            ${{ steps.out.outputs.pkg }}.apk
             manager-info.env
           if-no-files-found: error
           retention-days: 30
@@ -299,12 +333,12 @@ jobs:
         shell: bash
         run: |
           set -euo pipefail
-          TAG="manager-${{ inputs.ksu_variant }}-${{ steps.clone.outputs.short }}"
+          TAG="manager-${{ matrix.v.variant }}-${{ steps.clone.outputs.short }}"
           gh release view "$TAG" >/dev/null 2>&1 && gh release delete "$TAG" --yes --cleanup-tag || true
           gh release create "$TAG" \
-            "${{ inputs.package }}.apk" manager-info.env \
-            --title "管理器 ${{ inputs.ksu_variant }} ${{ inputs.package }} (${{ steps.clone.outputs.short }})" \
-            --notes "源码构建的管理器（applicationId=${{ inputs.package }}，类包名保持 com.sukisu.ultra）。
+            "${{ steps.out.outputs.pkg }}.apk" manager-info.env \
+            --title "管理器 ${{ matrix.v.variant }} ${{ steps.out.outputs.pkg }} (${{ steps.clone.outputs.short }})" \
+            --notes "源码构建的管理器（变体=${{ matrix.v.variant }}，包名=${{ steps.out.outputs.pkg }}）。
           KSU commit: ${{ steps.clone.outputs.commit }}
           size/hash: ${{ steps.out.outputs.size }} ${{ steps.out.outputs.hash }}"
           echo "已发布 Release: $TAG"

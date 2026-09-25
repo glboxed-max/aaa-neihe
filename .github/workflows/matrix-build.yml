@@ -44,10 +44,10 @@ on:
 
       # ==================== KernelSU / 管理器 ====================
       ksu_variant:
-        description: "KSU 变体"
+        description: "KSU 变体（全部=多变体并行）"
         required: true
         type: choice
-        options: [SukiSU, Official, ReSukiSU, Next, None]
+        options: [SukiSU, Official, ReSukiSU, Next, None, "全部"]
         default: SukiSU
       ksu_branch:
         description: "KSU 分支"
@@ -215,22 +215,31 @@ jobs:
             done < <(printf '%s\n' "$FILTERED" | awk -F'|' '{print $1"|"$2}' | sort -u)
           fi
 
+          # 变体维度：全部 -> 4 个变体并行；否则单变体
+          if [ "${{ inputs.ksu_variant }}" = "全部" ]; then
+            VAR_LIST="SukiSU Official ReSukiSU Next"
+          else
+            VAR_LIST="${{ inputs.ksu_variant }}"
+          fi
+
           JSON="[]"
           while IFS='|' read -r A K S P R; do
             [ -z "$A" ] && continue
             [ -z "$R" ] && R=r1
-            JSON=$(echo "$JSON" | jq -c --arg a "$A" --arg k "$K" --arg s "$S" --arg p "$P" --arg r "$R" \
-              '. + [{"android_version":$a,"kernel_version":$k,"sub_level":$s,"os_patch_level":$p,"revision":$r}]')
+            for V in $VAR_LIST; do
+              JSON=$(echo "$JSON" | jq -c --arg a "$A" --arg k "$K" --arg s "$S" --arg p "$P" --arg r "$R" --arg v "$V" \
+                '. + [{"android_version":$a,"kernel_version":$k,"sub_level":$s,"os_patch_level":$p,"revision":$r,"ksu_variant":$v}]')
+            done
           done <<< "$ROWS"
 
           echo "matrix=$JSON" >> "$GITHUB_OUTPUT"
           COUNT="$(echo "$JSON" | jq 'length')"
           echo "count=$COUNT" >> "$GITHUB_OUTPUT"
-          echo "内核范围=$KSCOPE Android=$ASCOPE 子版本=$MODE -> 目标数=$COUNT"
-          echo "$JSON" | jq -r '.[] | "  \(.android_version)-\(.kernel_version).\(.sub_level)-\(.os_patch_level)"'
+          echo "内核范围=$KSCOPE Android=$ASCOPE 子版本=$MODE 变体=${{ inputs.ksu_variant }} -> 目标数=$COUNT"
+          echo "$JSON" | jq -r '.[] | "  \(.android_version)-\(.kernel_version).\(.sub_level)-\(.os_patch_level) [\(.ksu_variant)]"'
 
   build:
-    name: "${{ matrix.target.android_version }}-${{ matrix.target.kernel_version }}.${{ matrix.target.sub_level }}"
+    name: "${{ matrix.target.android_version }}-${{ matrix.target.kernel_version }}.${{ matrix.target.sub_level }}-${{ matrix.target.ksu_variant }}"
     needs: prepare
     if: needs.prepare.outputs.count != '0'
     strategy:
@@ -245,7 +254,7 @@ jobs:
       sub_level: ${{ matrix.target.sub_level }}
       os_patch_level: ${{ matrix.target.os_patch_level }}
       revision: ${{ matrix.target.revision }}
-      ksu_variant: ${{ inputs.ksu_variant }}
+      ksu_variant: ${{ matrix.target.ksu_variant }}
       ksu_branch: ${{ inputs.ksu_branch }}
       custom_ref: ${{ inputs.custom_ref }}
       ksu_version: ${{ inputs.ksu_version }}
