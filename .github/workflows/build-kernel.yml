@@ -1000,7 +1000,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ inputs.ksu_variant }}_kernel-${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ steps.resolve.outputs.sub_level }}
+          name: 内核-${{ inputs.ksu_variant }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}.${{ steps.resolve.outputs.sub_level }}
           path: |
             *AnyKernel3.zip
             *.img
