@@ -786,6 +786,31 @@ jobs:
       # ============================================================
       # 9. KPM 镜像补丁（编译后）
       # ============================================================
+      - name: 校验管理器签名已注入内核
+        if: inputs.upload_manager && inputs.ksu_variant != 'None' && env.MANAGER_HASH != ''
+        shell: bash
+        run: |
+          IMG=""
+          for c in "$KERNEL_ROOT/bazel-bin/common/kernel_aarch64/Image" \
+                   "$KERNEL_ROOT/out/${{ inputs.android_version }}-${{ inputs.kernel_version }}/dist/Image"; do
+            [ -f "$c" ] && IMG="$c" && break
+          done
+          if [ -z "$IMG" ]; then
+            echo "::warning::未找到 Image，跳过管理器签名校验"
+            exit 0
+          fi
+          if strings "$IMG" | grep -q "$MANAGER_HASH"; then
+            echo "✅ 内核 Image 已包含管理器签名 $MANAGER_HASH"
+          else
+            echo "::error::内核 Image 未找到管理器签名 -> 管理器将无法获得 root"
+            exit 1
+          fi
+          if strings "$IMG" | grep -q "$MANAGER_PACKAGE"; then
+            echo "✅ 内核 Image 含管理器包名 $MANAGER_PACKAGE"
+          else
+            echo "::warning::内核 Image 未找到包名 $MANAGER_PACKAGE（若源码未启用包名校验则忽略）"
+          fi
+
       - name: 应用 KPM 补丁
         if: inputs.use_kpm && (inputs.ksu_variant == 'SukiSU' || inputs.ksu_variant == 'ReSukiSU')
         uses: ./.github/actions/kpm

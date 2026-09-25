@@ -98,17 +98,20 @@ runs:
         [ -n "$OLD" ] || { echo "::error::无法从 manifest 读取包名"; exit 1; }
         echo "包名: $OLD -> $NEW"
 
-        sed -i "s|package=\"$OLD\"|package=\"$NEW\"|" dec/AndroidManifest.xml
-
         OLDP="${OLD//./\/}"
         NEWP="${NEW//./\/}"
+
+        # 1) 清单：全局替换包名（含组件类名 application/activity/service、authorities、permission 等）
+        sed -i "s|${OLD}|${NEW}|g" dec/AndroidManifest.xml
+
+        # 2) smali：重命名类目录 + 替换所有引用（Lcom/x/y 与字符串形式的 com.x.y）
         shopt -s nullglob
         for d in dec/smali dec/smali_classes*; do
           [ -d "$d/$OLDP" ] || continue
           mkdir -p "$d/$(dirname "$NEWP")"
           mv "$d/$OLDP" "$d/$NEWP"
         done
-        find dec -name '*.smali' -print0 | xargs -0 -r sed -i "s|L${OLDP}|L${NEWP}|g"
+        find dec -name '*.smali' -print0 | xargs -0 -r sed -i "s|L${OLDP}|L${NEWP}|g; s|${OLD}|${NEW}|g"
 
         java -jar tools/apktool.jar b dec -o unsigned.apk >/dev/null
         ls -la unsigned.apk
