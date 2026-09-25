@@ -226,7 +226,6 @@ jobs:
       susfs_commit: ""
       use_zram: ${{ inputs.use_zram }}
       zram_full_algo: ${{ inputs.zram_full_algo }}
-      zram_extra_algos: ""
       use_bbg: ${{ inputs.use_bbg }}
       use_ddk: ${{ inputs.use_ddk }}
       use_ntsync: ${{ inputs.use_ntsync }}

@@ -85,11 +85,6 @@ on:
         required: false
         type: boolean
         default: false
-      zram_extra_algos:
-        description: "额外 ZRAM 算法（逗号分隔，如 lzo,lz4,deflate,zstd,842）"
-        required: false
-        type: string
-        default: ""
       use_bbg:
         description: "启用 BBG 防格机"
         required: true
@@ -201,10 +196,6 @@ on:
         required: false
         type: boolean
         default: false
-      zram_extra_algos:
-        required: false
-        type: string
-        default: ""
       use_bbg:
         required: false
         type: boolean
@@ -570,7 +561,7 @@ jobs:
           kernel_version: ${{ inputs.kernel_version }}
           android_version: ${{ inputs.android_version }}
           full_algo: ${{ inputs.zram_full_algo }}
-          extra_algos: ${{ inputs.zram_extra_algos }}
+          extra_algos: ""
 
       - name: BBG 防格机
         if: inputs.use_bbg
