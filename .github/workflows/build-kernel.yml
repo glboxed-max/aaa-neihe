@@ -147,6 +147,11 @@ on:
         required: false
         type: boolean
         default: false
+      upload_manager:
+        description: "同时下载并上传对应版本的管理器 APK"
+        required: false
+        type: boolean
+        default: true
 
   workflow_call:
     inputs:
@@ -244,6 +249,10 @@ on:
         required: false
         type: boolean
         default: false
+      upload_manager:
+        required: false
+        type: boolean
+        default: true
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.sub_level }}
@@ -787,6 +796,37 @@ jobs:
       # ============================================================
       # 11. 失败诊断 & 上传
       # ============================================================
+      - name: 下载对应版本管理器 APK
+        if: inputs.upload_manager && inputs.ksu_variant != 'None'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          case "${{ inputs.ksu_variant }}" in
+            SukiSU)   REPO="SukiSU-Ultra/SukiSU-Ultra" ;;
+            Official) REPO="tiann/KernelSU" ;;
+            ReSukiSU) REPO="ReSukiSU/ReSukiSU" ;;
+            Next)     REPO="KernelSU-Next/KernelSU-Next" ;;
+            *) echo "无对应管理器，跳过"; exit 0 ;;
+          esac
+          mkdir -p manager
+          echo "获取 $REPO 最新 Release 的管理器 APK..."
+          REL="$(curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" \
+                 "https://api.github.com/repos/$REPO/releases/latest" || true)"
+          URLS="$(printf '%s' "$REL" | jq -r '.assets[]? | select(.name | endswith(".apk")) | .browser_download_url' 2>/dev/null || true)"
+          if [ -z "$URLS" ]; then
+            echo "::warning::$REPO 最新 Release 未提供 APK，跳过管理器下载"
+            exit 0
+          fi
+          while IFS= read -r u; do
+            [ -n "$u" ] || continue
+            curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -O --output-dir manager "$u" \
+              || echo "::warning::下载失败: $u"
+          done <<< "$URLS"
+          echo "已下载的管理器："
+          ls -la manager || true
+
       - name: 收集补丁冲突文件
         if: always()
         run: |
@@ -814,6 +854,7 @@ jobs:
           path: |
             *AnyKernel3.zip
             *.img
+            manager/**
             patch-rejects/**
           retention-days: 7
           if-no-files-found: warn

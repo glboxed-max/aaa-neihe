@@ -238,3 +238,4 @@ jobs:
       build_time: ""
       custom_kernel_options: ""
       publish_release: ${{ inputs.publish_release }}
+      upload_manager: ${{ inputs.upload_manager }}

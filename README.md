@@ -90,6 +90,7 @@ Android GKI 内核自动化构建（GitHub Actions）。基于 [jiuxiao226/Kerne
 | `build_time` | 自定义构建时间（留空=当前 UTC） |
 | `custom_kernel_options` | 自定义 defconfig 片段（每行一条） |
 | `publish_release` | 构建完成后把产物发布到 GitHub Releases（tag 形如 `android14-6.1.145-2025-09-SukiSU-r<运行号>`） |
+| `upload_manager` | 同时下载并上传对应版本的管理器 APK（默认开；产物里会多一个 `SukiSU/...apk`） |
 
 ---
 
