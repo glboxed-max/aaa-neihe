@@ -26,6 +26,12 @@ runs:
           exit 1
         fi
 
+        # Kleaf 会校验 fragment 里的符号必须在 Kconfig 中声明；
+        # 不同内核版本声明的符号不同（如 6.1 无 NETFS_SUPPORT），
+        # 这里先收集全部已声明符号，未声明的直接跳过并告警，避免整条构建失败。
+        DECLARED="$(grep -rhoE '^[[:space:]]*(menu)?config[[:space:]]+[A-Za-z0-9_]+' --include='Kconfig*' . 2>/dev/null | awk '{print $NF}' | sort -u || true)"
+        echo "Kconfig 已声明符号数: $(printf '%s\n' "$DECLARED" | grep -c . || true)"
+
         apply_line() {
           local line="$1"
           line="$(echo "$line" | sed -e 's/^[[:space:]]*//' -e 's/[[:space:]]*$//')"
@@ -38,6 +44,13 @@ runs:
           else
             key="$line"
             value="y"
+          fi
+
+          # 跳过 Kconfig 未声明的符号（DECLARED 为空说明探测失败，则不过滤）
+          local sym="${key#CONFIG_}"
+          if [ -n "$DECLARED" ] && ! printf '%s\n' "$DECLARED" | grep -qx "$sym"; then
+            echo "::warning::Kconfig 未声明 ${key}，跳过"
+            return
           fi
 
           if grep -q "^${key}=" "$DEFCONFIG"; then

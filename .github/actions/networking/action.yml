@@ -97,13 +97,32 @@ runs:
           CONFIG_CIFS_POSIX=y
 
     # 来源：WildKernels/GKI_KernelSU_SUSFS actions/cifs —— 补全 netfs/keys 依赖
-    - name: 补全网络文件系统依赖配置
+    # 注意：不同内核版本 Kconfig 声明不同（如 6.1 无 NETFS_SUPPORT），
+    #       而 Kleaf 会校验 fragment 里的符号是否存在，必须先探测再写。
+    - name: 探测可用的网络文件系统符号
+      shell: bash
+      run: |
+        set -euo pipefail
+        KC="$KERNEL_ROOT/common"
+        LIST=""
+        for sym in NETWORK_FILESYSTEMS NETFS_SUPPORT KEYS; do
+          if grep -rqE "^[[:space:]]*config[[:space:]]+${sym}$" "$KC" 2>/dev/null; then
+            LIST="${LIST}CONFIG_${sym}=y"$'\n'
+          else
+            echo "::warning::Kconfig 未声明 CONFIG_${sym}，跳过"
+          fi
+        done
+        {
+          echo "NETFS_SYMS_CFG<<__EOF__"
+          printf '%s' "$LIST"
+          echo "__EOF__"
+        } >> "$GITHUB_ENV"
+
+    - name: 补全网络文件系统依赖配置（仅写入 Kconfig 声明的符号）
+      if: env.NETFS_SYMS_CFG != ''
       uses: ./.github/actions/set-kernel-config
       with:
-        config_list: |
-          CONFIG_NETWORK_FILESYSTEMS=y
-          CONFIG_NETFS_SUPPORT=y
-          CONFIG_KEYS=y
+        config_list: ${{ env.NETFS_SYMS_CFG }}
 
     - name: 修复 android16-6.12 的 CIFS 模块声明
       if: inputs.android_version == 'android16' && inputs.kernel_version == '6.12'

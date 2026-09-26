@@ -79,8 +79,20 @@ runs:
 
         echo "[+] BBRv3 处理完成"
 
+    - name: 探测 BBRv3 符号是否可用
+      shell: bash
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        set -euo pipefail
+        if grep -rqE '^[[:space:]]*config TCP_CONG_BBR3$' net/ipv4 2>/dev/null; then
+          echo "BBR3_CFG=CONFIG_TCP_CONG_BBR3=y" >> "$GITHUB_ENV"
+        else
+          echo "::warning::Kconfig 未声明 TCP_CONG_BBR3（补丁未生效/版本不符），跳过该配置"
+          echo "BBR3_CFG=" >> "$GITHUB_ENV"
+        fi
+
     - name: 启用 BBRv3 配置
+      if: env.BBR3_CFG != ''
       uses: ./.github/actions/set-kernel-config
       with:
-        config_list: |
-          CONFIG_TCP_CONG_BBR3=y
+        config_list: ${{ env.BBR3_CFG }}
