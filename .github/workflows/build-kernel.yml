@@ -279,7 +279,7 @@ on:
         default: "源码构建"
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.sub_level }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.android_version }}-${{ inputs.kernel_version }}-${{ inputs.sub_level }}-${{ inputs.ksu_variant }}-${{ github.run_id }}
   cancel-in-progress: true
 
 jobs:
