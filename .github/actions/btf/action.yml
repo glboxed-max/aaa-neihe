@@ -89,25 +89,27 @@ runs:
         fi
 
     # ---------- 配置 ----------
-    - name: 启用 BTF 配置
-      uses: ./.github/actions/set-kernel-config
-      with:
-        config_list: |
-          CONFIG_DEBUG_INFO_BTF=y
+    - name: 探测 BTF/FUSE-BPF 相关符号
+      shell: bash
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        set -euo pipefail
+        LIST=""
+        for sym in DEBUG_INFO_BTF BPF_EVENTS KPROBE_EVENTS UPROBES UPROBE_EVENTS FUSE_FS BPF_SYSCALL FUSE_BPF; do
+          if grep -rqE "^[[:space:]]*(menu)?config[[:space:]]+${sym}$" . 2>/dev/null; then
+            LIST="${LIST}CONFIG_${sym}=y"$'\n'
+          else
+            echo "::warning::Kconfig 未声明 CONFIG_${sym}，跳过"
+          fi
+        done
+        {
+          echo "BTF_CFG<<__EOF__"
+          printf '%s' "$LIST"
+          echo "__EOF__"
+        } >> "$GITHUB_ENV"
 
-    - name: 启用 eBPF 配置
+    - name: 启用 BTF / eBPF / FUSE-BPF 配置
+      if: env.BTF_CFG != ''
       uses: ./.github/actions/set-kernel-config
       with:
-        config_list: |
-          CONFIG_BPF_EVENTS=y
-          CONFIG_KPROBE_EVENTS=y
-          CONFIG_UPROBES=y
-          CONFIG_UPROBE_EVENTS=y
-
-    - name: 启用 FUSE-BPF 配置
-      uses: ./.github/actions/set-kernel-config
-      with:
-        config_list: |
-          CONFIG_FUSE_FS=y
-          CONFIG_BPF_SYSCALL=y
-          CONFIG_FUSE_BPF=y
+        config_list: ${{ env.BTF_CFG }}

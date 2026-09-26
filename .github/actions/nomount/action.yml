@@ -54,7 +54,20 @@ runs:
         fi
         echo "NoMount commit: $(git -C "$KERNEL_DIR/NoMount" rev-parse HEAD)"
 
-    - name: 启用 NoMount 配置
+    - name: 启用 NoMount 配置（仅当 Kconfig 已声明）
+      shell: bash
+      working-directory: ${{ env.KERNEL_ROOT }}/common
+      run: |
+        set -euo pipefail
+        if grep -rqE '^[[:space:]]*config[[:space:]]+NOMOUNT$' . 2>/dev/null; then
+          echo "CONFIG_NOMOUNT=y" >> "$GITHUB_ENV"
+        else
+          echo "::warning::Kconfig 未声明 CONFIG_NOMOUNT（NoMount 未集成成功），跳过"
+        fi
+      id: nomount_cfg
+
+    - name: 写入 NoMount 配置
+      if: env.CONFIG_NOMOUNT == 'y'
       uses: ./.github/actions/set-kernel-config
       with:
         config_list: |
