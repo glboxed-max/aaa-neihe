@@ -54,7 +54,7 @@ runs:
         fi
         echo "NoMount commit: $(git -C "$KERNEL_DIR/NoMount" rev-parse HEAD)"
 
-    - name: 启用 NoMount 配置（仅当 Kconfig 已声明）
+    - name: 启用 NoMount 配置（必须由 NoMount 补丁声明）
       shell: bash
       working-directory: ${{ env.KERNEL_ROOT }}/common
       run: |
@@ -62,7 +62,9 @@ runs:
         if grep -rqE '^[[:space:]]*config[[:space:]]+NOMOUNT$' . 2>/dev/null; then
           echo "CONFIG_NOMOUNT=y" >> "$GITHUB_ENV"
         else
-          echo "::warning::Kconfig 未声明 CONFIG_NOMOUNT（NoMount 未集成成功），跳过"
+          # 规则（AGENTS.md 第 7/8 条）：不允许静默关闭用户显式开启的功能。
+          echo "::error::已启用 NoMount，但 Kconfig 未声明 CONFIG_NOMOUNT（集成未成功）。"
+          exit 1
         fi
       id: nomount_cfg
 

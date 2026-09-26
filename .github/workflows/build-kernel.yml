@@ -519,7 +519,17 @@ jobs:
             echo "克隆 ABK 资源（DDK / ZRAM 增强）..."
             git clone --depth 1 https://github.com/xingguangcuican6666/ABK.git ABK \
               || git clone --depth 1 -b dev https://github.com/xingguangcuican6666/ABK.git ABK \
-              || echo "::warning::ABK 资源克隆失败，DDK/ZRAM 升级可能不可用"
+              || { echo "::error::ABK 资源克隆失败"; exit 1; }
+            # 版本锁定：ABK 资源按 pins 锁定到固定 sha（禁止用分支 tip，避免版本漂移）
+            PIN_ABK="$(jq -r '.pins.abk.sha // empty' "$GITHUB_WORKSPACE/.github/pins/verified.json" 2>/dev/null || true)"
+            if [ -n "$PIN_ABK" ]; then
+              if git -C ABK fetch --depth 1 origin "$PIN_ABK" >/dev/null 2>&1 && git -C ABK checkout -q "$PIN_ABK"; then
+                echo "ABK 已锁定到 pin: $PIN_ABK"
+              else
+                echo "::error::ABK pin $PIN_ABK 不可用（按规则不使用分支 tip）"
+                exit 1
+              fi
+            fi
           fi
 
       - name: 克隆 kernel_patches（性能 / BBRv3 / ptrace / 设备补丁源）

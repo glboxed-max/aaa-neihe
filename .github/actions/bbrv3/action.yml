@@ -87,8 +87,10 @@ runs:
         if grep -rqE '^[[:space:]]*config TCP_CONG_BBR3$' net/ipv4 2>/dev/null; then
           echo "BBR3_CFG=CONFIG_TCP_CONG_BBR3=y" >> "$GITHUB_ENV"
         else
-          echo "::warning::Kconfig 未声明 TCP_CONG_BBR3（补丁未生效/版本不符），跳过该配置"
-          echo "BBR3_CFG=" >> "$GITHUB_ENV"
+          # 规则（AGENTS.md 第 7/8 条）：不允许静默关闭用户显式开启的功能。
+          echo "::error::已启用 BBRv3，但 Kconfig 未声明 TCP_CONG_BBR3（补丁未生效或版本不匹配）。"
+          echo "::error::请检查该 android-内核 版本是否有对应 BBRv3 补丁，而不是跳过该功能。"
+          exit 1
         fi
 
     - name: 启用 BBRv3 配置

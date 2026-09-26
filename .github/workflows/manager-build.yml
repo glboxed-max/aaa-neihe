@@ -228,19 +228,16 @@ jobs:
             echo "✅ 使用源码编译的 ksud"
           fi
           if [ "$ok" = "0" ]; then
-            echo "::warning::源码 ksud 不可用，回退到官方 Release 的 APK 提取 libksud.so"
-            REPO="${{ matrix.v.repo }}"
-            curl -fsSL -H "Authorization: Bearer ${{ github.token }}" -H "Accept: application/vnd.github+json" \
-              "https://api.github.com/repos/$REPO/releases/latest" -o /tmp/rel.json || echo '{}' > /tmp/rel.json
-            URL="$(jq -r '.assets[]? | select(.name|endswith(".apk")) | .browser_download_url' /tmp/rel.json 2>/dev/null | head -n1)"
-            if [ -z "$URL" ] || [ "$URL" = "null" ]; then
-              echo "::warning::官方 Release 无 APK，跳过 libksud.so（Gradle 仍会构建，可能缺 libksud）"
-              exit 0
-            fi
-            curl -fsSL -o /tmp/official.apk "$URL" || { echo "::warning::官方 APK 下载失败，跳过 libksud"; exit 0; }
+            # 规则（AGENTS.md 第 3 条）：禁止跨版本混用。这里只从“与当前 commit 相同”的
+            # 上游 CI 产物里取 libksud.so（ksud 与内核/管理器同版本）；取不到就失败。
+            echo "::warning::源码 ksud 不可用；改为从【同一 commit】的上游 CI 产物取 libksud.so"
+            bash "$GITHUB_WORKSPACE/.github/tools/fetch_official_manager.sh" \
+              "${{ matrix.v.variant }}" "${{ steps.clone.outputs.commit }}" \
+              /tmp/official-manager.apk "$JNI/.ksud"
             for ABI in arm64-v8a armeabi-v7a x86_64; do
-              unzip -o -j /tmp/official.apk "lib/$ABI/libksud.so" -d "$JNI/$ABI" >/dev/null 2>&1 || true
+              [ -f "$JNI/.ksud/$ABI/libksud.so" ] && cp -f "$JNI/.ksud/$ABI/libksud.so" "$JNI/$ABI/libksud.so" || true
             done
+            rm -rf "$JNI/.ksud"
             ls -lh "$JNI"/*/libksud.so 2>/dev/null || true
           fi
 

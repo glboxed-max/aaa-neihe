@@ -56,14 +56,17 @@ runs:
 
         RELS="$(curl -fsSL -H "Authorization: Bearer $TOKEN" -H "Accept: application/vnd.github+json" \
           "https://api.github.com/repos/$REPO/releases?per_page=100" || true)"
+        # 规则（AGENTS.md 第 3 条）：管理器必须与内核所用 KSU commit 精确对应
+        # （tag: manager-<变体>-<短sha>）。找不到就交给上层“同 commit 官方管理器”重打包回退，
+        # 绝不用其它版本的 Release 顶替（跨版本混用）。
         REL_JSON="$(printf '%s' "$RELS" | jq -c \
-          --arg t "$TAG" --arg p "manager-${VARIANT}-" '
-            (map(select($t != "" and .tag_name == $t)) | .[0]) as $exact
-            | (if $exact then $exact else (map(select(.tag_name | startswith($p))) | .[0]) end) // empty' \
+          --arg t "$TAG" '
+            (map(select($t != "" and .tag_name == $t)) | .[0]) // empty' \
           2>/dev/null || true)"
 
         if [ -z "$REL_JSON" ] || [ "$REL_JSON" = "null" ]; then
-          echo "::warning::未找到 $VARIANT 的源码管理器 Release，稍后将回退到重打包"
+          echo "::warning::未找到与内核 commit 精确对应的源码管理器 Release（期望 tag: ${TAG:-<空>}）"
+          echo "::warning::将回退到“同 commit 官方管理器”重打包路径（不会使用其它版本）"
           exit 0
         fi
 

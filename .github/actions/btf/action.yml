@@ -98,8 +98,13 @@ runs:
         for sym in DEBUG_INFO_BTF BPF_EVENTS KPROBE_EVENTS UPROBES UPROBE_EVENTS FUSE_FS BPF_SYSCALL FUSE_BPF; do
           if grep -rqE "^[[:space:]]*(menu)?config[[:space:]]+${sym}$" . 2>/dev/null; then
             LIST="${LIST}CONFIG_${sym}=y"$'\n'
+          elif [ "$sym" = "DEBUG_INFO_BTF" ]; then
+            # 规则：BTF 是本功能的核心，缺失即视为补丁/配置失败，不允许静默降级。
+            echo "::error::已启用 BTF，但 Kconfig 未声明 CONFIG_DEBUG_INFO_BTF（补丁/配置未生效）。"
+            exit 1
           else
-            echo "::warning::Kconfig 未声明 CONFIG_${sym}，跳过"
+            # 其余为可选子项（例如旧内核无 FUSE_BPF），按版本差异告警跳过。
+            echo "::warning::Kconfig 未声明 CONFIG_${sym}（该内核版本无此项），跳过"
           fi
         done
         {
